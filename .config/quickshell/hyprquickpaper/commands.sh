@@ -25,7 +25,7 @@ case "${img,,}" in
             awww img "$theme_img" -t outer --transition-duration 1
             sleep 1
         fi
-        setsid -f mpvpaper -o "no-audio loop hwdec=auto" '*' "$img" \
+        python3 "$HOME/.config/quickshell/hyprquickpaper/live-control.py" --start "$img" \
             >>"$HOME/.cache/43pr/mpvpaper.log" 2>&1
         echo "$img" > "$HOME/.cache/43pr/last-live"
         ;;

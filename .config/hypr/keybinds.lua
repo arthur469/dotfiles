@@ -150,6 +150,7 @@ bind(mainMod .. " + " .. colorpicker_key,   hl.dsp.exec_cmd("qs -n -p ~/.config/
 bind(mainMod .. " + " .. fullscreen_key,    hl.dsp.window.fullscreen({ mode = 0 }))
 bind(mainMod .. " + " .. opacity_key,       hl.dsp.exec_cmd(home .. "/.config/hypr/scripts/opacity.sh"))
 bind(mainMod .. " + SHIFT + " .. opacity_key, hl.dsp.exec_cmd("python3 " .. home .. "/.config/hypr/scripts/window-opacity.py"))
+bind(mainMod .. " + CTRL + " .. opacity_key, hl.dsp.exec_cmd("python3 " .. home .. "/.config/hypr/scripts/window-opacity.py --reset-all"))
 bind(mainMod .. " + " .. theme_key,         hl.dsp.exec_cmd("python3 " .. home .. "/.config/43pr/bin/theme.py toggle"))
 bind(mainMod .. " + " .. notifications_key, hl.dsp.exec_cmd("qs ipc call notifications toggle"))
 bind(mainMod .. " + " .. todo_key,          hl.dsp.exec_cmd("qs ipc call todo toggle"))

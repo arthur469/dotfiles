@@ -9,23 +9,38 @@ Scope {
     id: root
     property string barPosition: "left"
     property bool brightnessMode: false
+    property bool opacityMode: false
+    property var opacityController: null
+    property real brightnessStep: 2
     property Item savedVolumeTarget: null
     property var brightnessButtons: []
     function registerBrightnessButton(item) { brightnessButtons=brightnessButtons.filter(b=>b&&b.objectName!==undefined).concat([item]); }
     function unregisterBrightnessButton(item) { brightnessButtons=brightnessButtons.filter(b=>b!==item); }
 
-    readonly property real controlValue: brightnessMode ? BrightnessState.value : volume
+    readonly property real controlValue: opacityMode ? (opacityController?Math.max(0,(opacityController.osdPercent-40)/60):1) : brightnessMode ? BrightnessState.value : volume
     function showBrightness(item) {
-        if (!brightnessMode) savedVolumeTarget=placement.target;
-        brightnessMode=true; placement.target=item; BrightnessState.refresh(item.QsWindow.window.screen.name);
+        if (!brightnessMode && !opacityMode) savedVolumeTarget=placement.target;
+        opacityMode=false;brightnessMode=true; placement.target=item; if(BrightnessState.output!==item.QsWindow.window.screen.name || !BrightnessState.available)BrightnessState.refresh(item.QsWindow.window.screen.name);
         pendingShow=false; showMedia=false; showing=true; hideTimer.restart();
     }
+    function showOpacity(item) {
+        if(!opacityController)return;
+        if(!brightnessMode&&!opacityMode)savedVolumeTarget=placement.target;
+        brightnessMode=false;opacityMode=true;placement.target=item;opacityController.prepareOsd();
+        pendingShow=false;showMedia=false;showing=true;hideTimer.restart();
+    }
+    function setControlRatio(ratio) {
+        const value=Math.max(0,Math.min(1,ratio));
+        if(opacityMode&&opacityController)opacityController.setOsdPercent(40+value*60);
+        else if(brightnessMode)BrightnessState.set(value*100);
+    }
     function showVolume() {
-        if(brightnessMode && savedVolumeTarget)placement.target=savedVolumeTarget;
-        brightnessMode=false; pendingShow=false; showMedia=false; showing=true; hideTimer.restart();
+        if((brightnessMode||opacityMode) && savedVolumeTarget)placement.target=savedVolumeTarget;
+        brightnessMode=false;opacityMode=false; pendingShow=false; showMedia=false; showing=true; hideTimer.restart();
     }
     function adjustControl(delta) {
-        if(brightnessMode)BrightnessState.set(BrightnessState.value*100 + (delta>0 ? 5 : -5));
+        if(opacityMode&&opacityController)opacityController.adjustOsd(delta/120);
+        else if(brightnessMode)BrightnessState.adjust((delta/120)*brightnessStep);
         else nudgeVolume(delta);
     }
     readonly property bool verticalVolume: barPosition === "left" || barPosition === "right"
@@ -232,7 +247,7 @@ Scope {
     }
 
     function triggerOsd() {
-        if(brightnessMode)showVolume();
+        if(brightnessMode||opacityMode)showVolume();
         if (!ready) return
         if (showing) { hideTimer.restart(); return }
         pendingShow = true
@@ -278,8 +293,8 @@ Scope {
     IpcHandler {
         target: "mediaosd"
         function volume(): void { root.showVolume(); }
-        function brightness(output: string): void { const button=root.brightnessButtons.find(b=>b&&b.QsWindow.window&&b.QsWindow.window.screen.name===output);if(button)root.showBrightness(button); }
-        function diagnostic(): string { return JSON.stringify({open:root.showing,media:root.showMedia,brightness:root.brightnessMode,brightnessValue:BrightnessState.value,brightnessError:BrightnessState.error,geometry:osdLoader.item ? osdLoader.item.geometry() : null}); }
+        function brightness(output: string): void { BrightnessState.refresh(output); const button=root.brightnessButtons.find(b=>b&&b.QsWindow.window&&b.QsWindow.window.screen.name===output);if(button)root.showBrightness(button); }
+        function diagnostic(): string { return JSON.stringify({open:root.showing,media:root.showMedia,opacity:root.opacityMode,opacityValue:root.opacityController?root.opacityController.osdPercent:100,brightness:root.brightnessMode,brightnessValue:BrightnessState.value,brightnessError:BrightnessState.error,geometry:osdLoader.item ? osdLoader.item.geometry() : null}); }
         function media(): void { root.triggerMediaOsd() }
         function settings(): void { root.openSettings() }
         function hide(): void { root.closeAll() }
@@ -506,7 +521,7 @@ Scope {
                         anchors.top: root.verticalVolume ? parent.top : undefined
                         anchors.topMargin: 10
                         anchors.verticalCenter: root.verticalVolume ? undefined : parent.verticalCenter
-                        text: root.brightnessMode ? "󰃠" : root.muted ? "󰖁" : root.volume <= 0 ? "󰕿" : root.volume < 0.5 ? "󰖀" : "󰕾"
+                        text: root.opacityMode ? "◐" : root.brightnessMode ? "󰃠" : root.muted ? "󰖁" : root.volume <= 0 ? "󰕿" : root.volume < 0.5 ? "󰖀" : "󰕾"
                         font.family: "Symbols Nerd Font"; font.pixelSize: 20; color: Theme.text
                     }
                     Text {
@@ -516,7 +531,7 @@ Scope {
                         anchors.bottom: root.verticalVolume ? parent.bottom : undefined
                         anchors.bottomMargin: 10
                         anchors.verticalCenter: root.verticalVolume ? undefined : parent.verticalCenter
-                        text: root.brightnessMode ? (BrightnessState.error ? "—" : Math.round(BrightnessState.value*100)+"%") : root.muted ? "󰖁" : Math.round(root.volume * 100) + "%"
+                        text: root.opacityMode ? (root.opacityController&&root.opacityController.osdAvailable?root.opacityController.osdPercent+"%":"—") : root.brightnessMode ? (BrightnessState.error ? "—" : Math.round(BrightnessState.value*100)+"%") : root.muted ? "󰖁" : Math.round(root.volume * 100) + "%"
                         font.pixelSize: 12; font.bold: true; color: Theme.text
                     }
                     Rectangle {
@@ -528,16 +543,17 @@ Scope {
                         radius: 4; color: Theme.alpha(Theme.text, 0.25)
                         MouseArea {
                             anchors.fill: parent; anchors.margins: -12
-                            enabled: root.brightnessMode && BrightnessState.available
-                            function adjust(mouse) { const p=mapToItem(volumeTrack,mouse.x,mouse.y);BrightnessState.set(100*(root.verticalVolume ? 1-p.y/volumeTrack.height : p.x/volumeTrack.width)); }
+                            enabled: root.opacityMode ? !!root.opacityController&&root.opacityController.osdAvailable : root.brightnessMode&&BrightnessState.available
+                            function adjust(mouse) { const p=mapToItem(volumeTrack,mouse.x,mouse.y);root.setControlRatio(root.verticalVolume ? 1-p.y/volumeTrack.height : p.x/volumeTrack.width); }
                             onPressed: mouse => adjust(mouse)
+                            onWheel:wheel=>{root.adjustControl(wheel.angleDelta.y);wheel.accepted=true;}
                             onPositionChanged: mouse => {if(pressed)adjust(mouse);}
                         }
                         Rectangle {
                             anchors.bottom: parent.bottom
                             width: root.verticalVolume ? parent.width : parent.width * Math.min(root.controlValue, 1)
                             height: root.verticalVolume ? parent.height * Math.min(root.controlValue, 1) : parent.height
-                            radius: 4; color: Theme.text; visible: root.brightnessMode || !root.muted
+                            radius: 4; color: Theme.text; visible: root.opacityMode || root.brightnessMode || !root.muted
                             Behavior on width { NumberAnimation { duration: 100 } }
                             Behavior on height { NumberAnimation { duration: 100 } }
                         }

@@ -14,6 +14,7 @@ Scope {
     property var notificationController: null
     property var powerController: null
     property var volumeController: null
+    property var opacityController: null
     readonly property string notificationPosition: cfg.position
 
     // ───────────────────────── Config ─────────────────────────
@@ -21,7 +22,7 @@ Scope {
     readonly property var defaults: ({
         // layout
         position: "left", style: "joined", thickness: 20, margin: 4,
-        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
+        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), groupRotations: ({}), autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
         // appearance
         scale: 1.0, bgOpacity: 0.5, border: false, radius: 16, calRadius: 15,
         // tooltips
@@ -69,6 +70,7 @@ Scope {
             property bool dropToMinimize: root.defaults.dropToMinimize
             property bool freeLayout: root.defaults.freeLayout
             property var groupCells: root.defaults.groupCells
+            property var groupRotations: root.defaults.groupRotations
             property bool autoGroup: root.defaults.autoGroup
             property bool quickFloatRetile: root.defaults.quickFloatRetile
             property bool reserveSpace: root.defaults.reserveSpace   // push windows away from the bar
@@ -116,9 +118,10 @@ Scope {
     readonly property bool vertical: cfg.position === "left" || cfg.position === "right"
     readonly property bool joined: cfg.style !== "floating"
     readonly property bool strip: cfg.style === "strip"
-    readonly property int panelThick: Math.max(vertical ? cfg.thickness + 12 : cfg.thickness, isOn("tasks") ? Math.round(cfg.taskIconSize * cfg.scale) + 10 : 0)
-    readonly property int effEdge: strip ? 0 : cfg.margin
-    readonly property int effGap: strip ? 0 : 6
+    readonly property int bubblePadding: 3
+    readonly property int panelThick: Math.max(vertical ? cfg.thickness + 6 : cfg.thickness, isOn("tasks") ? Math.round(cfg.taskIconSize * cfg.scale) + 6 : 0)
+    readonly property int effEdge: 0
+    readonly property int effGap: 0
     readonly property real barRadius: strip ? 0 : cfg.radius
     readonly property color bgColor: Qt.alpha(Theme.bg, cfg.bgOpacity)
     readonly property color borderColor: Theme.accent
@@ -262,6 +265,7 @@ Scope {
         { id: "ws",       l: "Workspaces" },
         { id: "tasks",    l: "Open apps" },
         { id: "media",    l: "Media" },
+        {id:"opacity",l:LocaleState.tr("Opacité","Opacity"),g:"󰂵",tip:LocaleState.tr("Opacité des fenêtres","Window opacity"),hint:LocaleState.tr("Régler l’opacité","Adjust opacity")},
         { id: "brightness", l: "Luminosité", g: "󰃠", tip: "Luminosité de cet écran", hint: "Régler la luminosité" },
         { id: "volume",   l: "Volume" },
         { id: "battery",  l: "Battery" },
@@ -279,7 +283,7 @@ Scope {
     readonly property var moduleIds: moduleDefs.map(d => d.id)
     readonly property var defMap: moduleDefs.reduce((m, d) => { m[d.id] = d; return m; }, {})
     readonly property var comps: ({
-        brightness: brightnessC, cpu: statsC, ram: statsC, gpu: statsC, ws: wsC, tasks: tasksC, media: mediaC, volume: volumeC, battery: batteryC, icon: iconC
+        opacity: opacityC, brightness: brightnessC, cpu: statsC, ram: statsC, gpu: statsC, ws: wsC, tasks: tasksC, media: mediaC, volume: volumeC, battery: batteryC, icon: iconC
     })
 
     function csv(str) { return str === "" ? [] : str.split(","); }
@@ -329,20 +333,81 @@ Scope {
 
     property var moduleSlots: []
     property var bubblePanels: []
-    readonly property string reservedBubbleState: JSON.stringify({active:cfg.freeLayout && cfg.reserveSpace && barVisible && barLive,
+    property bool nativeReservation: false
+    readonly property string reservedBubbleState: JSON.stringify({active:cfg.reserveSpace && barVisible && barLive,margin:cfg.margin,
         minimized:taskButtons.filter(t=>t&&t.isMinimized&&t.visible).map(t=>({address:"0x"+t.hyprHandle.address.replace(/^0x/,""),geometry:root.taskRect(t)})),
         rectangles:bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>root.taskRect(p))})
     Connections {
         target:Hyprland
         function onRawEvent(event) {
-            if(cfg.freeLayout&&cfg.reserveSpace&&['openwindow','changefloatingmode','movewindow','movewindowv2','activewindowv2'].includes(event.name))reserveBubbleTimer.restart();
+            if(event.name==="43pr_bubble_rotate"){root.rotateDrag();return;}
+            if(cfg.reserveSpace&&['openwindow','changefloatingmode','movewindow','movewindowv2','activewindowv2'].includes(event.name))reserveBubbleTimer.restart();
         }
     }
     onReservedBubbleStateChanged: reserveBubbleTimer.restart()
     Timer { id:reserveBubbleTimer;interval:180;onTriggered:{if(reserveBubbleWorker.running){restart();return;}reserveBubbleWorker.command=["python3",Qt.resolvedUrl("scripts/bubble-space.py").toString().replace("file://",""),"--state",root.reservedBubbleState];reserveBubbleWorker.running=true;} }
-    Process {id:reserveBubbleWorker;stderr:StdioCollector{onStreamFinished:if(text.trim())console.warn("Bubble reservation: "+text.trim())}}
+    Process {id:reserveBubbleWorker;stdout:StdioCollector{onStreamFinished:{try{root.nativeReservation=JSON.parse(text).ready;}catch(e){root.nativeReservation=false;}}}stderr:StdioCollector{onStreamFinished:if(text.trim())console.warn("Bubble reservation: "+text.trim())}}
 
     property var calendarControllers: []
+    property string layoutPriority: ""
+    property string layoutAxis: vertical ? "y" : "x"
+    property bool dragMoved: false
+    property point dragGrip: Qt.point(0,0)
+    property var dragTargets: ({})
+    property var dragModuleTargets: ({})
+    property var dragSavedCells: null
+    property var dragSavedRotations: null
+    function moduleIsVertical(item) {
+        let ancestor=item;
+        while(ancestor) { if(ancestor.moduleSlotMarker===true)return ancestor.moduleVertical; ancestor=ancestor.parent; }
+        return root.vertical;
+    }
+    function recordDragTargets(window) {
+        const panels={},modules={};
+        for(const panel of bubblePanels)if(panel&&panel.hostWindow===window&&panel.visible){const p=panel.mapToItem(window.contentItem,0,0);panels[panel.groupId]={x:p.x,y:p.y,width:panel.width,height:panel.height};}
+        for(const slot of moduleSlots)if(slot&&slot.hostWindow===window){const p=slot.mapToItem(window.contentItem,slot.width/2,slot.height/2);modules[slot.modelData]={x:p.x,y:p.y};}
+        dragTargets=panels;dragModuleTargets=modules;
+    }
+    function rememberDrag() { dragMoved=false;dragSavedCells=cfg.groupCells;dragSavedRotations=cfg.groupRotations; }
+    property double lastRotationAt:0
+    function rotateDrag() {
+        if(!dragWindow || Date.now()-lastRotationAt<70)return;
+        lastRotationAt=Date.now();
+        const id=dragGroupId || (dragItem?sectionOf(dragItem.modelData):"");
+        const result=BarLayout.rotateGroup(cfg,moduleIds,id,vertical);
+        if(result){cfg.groupCells=result.groupCells;cfg.groupRotations=result.groupRotations;dragMoved=true;}
+    }
+    function findMerge(sourceIds) {
+        mergePanel=null;mergeAnchor="";previewCells=({});
+        if(!cfg.autoGroup || !dragMoved)return;
+        for(const panel of bubblePanels) {
+            if(!panel || panel.hostWindow!==dragWindow || !panel.visible || panel.groupId===dragGroupId)continue;
+            const candidates=moduleSlots.filter(s=>s&&s.hostWindow===dragWindow&&panel.model.includes(s.modelData)&&!sourceIds.includes(s.modelData)&&s.visible);
+            if(!candidates.length)continue;
+            const live=panel.mapToItem(dragWindow.contentItem,0,0),saved=dragTargets[panel.groupId];
+            const inside=r=>r&&dragPoint.x>=r.x&&dragPoint.x<=r.x+r.width&&dragPoint.y>=r.y&&dragPoint.y<=r.y+r.height;
+            const original=inside(saved);
+            if(!original&&!inside({x:live.x,y:live.y,width:panel.width,height:panel.height}))continue;
+            mergePanel=panel;let distance=Infinity;
+            for(const other of candidates){const center=original&&dragModuleTargets[other.modelData]?dragModuleTargets[other.modelData]:other.mapToItem(dragWindow.contentItem,other.width/2,other.height/2),d=Math.hypot(dragPoint.x-center.x,dragPoint.y-center.y);
+                if(d<distance){distance=d;mergeAnchor=other.modelData;const dx=dragPoint.x-center.x,dy=dragPoint.y-center.y;mergeDirection=Math.abs(dx)>Math.abs(dy)?(dx<0?"left":"right"):(dy<0?"top":"bottom");}}
+            const result=dragGroupId?BarLayout.mergeGroups(cfg,moduleIds,dragGroupId,panel.groupId,mergeAnchor,mergeDirection,vertical):BarLayout.regroup(cfg,moduleIds,sourceIds[0],panel.groupId,0.5,undefined,mergeAnchor,mergeDirection,vertical);
+            previewCells=(result.groupCells||{})[panel.groupId]||{};return;
+        }
+    }
+    function persistPositions(layout,window,positions,rename) {
+        const state=Object.assign({},cfg,layout),all=BarLayout.groups(state,moduleIds),frame=window.layoutFrame;
+        const cells=Object.assign({},state.groupCells||{}),rotations=Object.assign({},state.groupRotations||{}),groups=[];
+        for(const g of all){if(!g.items.length)continue;
+            const old=Object.keys(rename||{}).find(k=>rename[k]===g.id)||g.id;
+            const r=positions[old];let id=g.id;
+            if(r && !id.startsWith("free-")){id="free-"+Date.now()+"-"+id;cells[id]=BarLayout.cells(state,g,vertical);rotations[id]=rotations[g.id]||0;}
+            const next=Object.assign({},g,{id:id});
+            if(r){next.position=vertical?r.y/Math.max(1,frame.height-r.height):r.x/Math.max(1,frame.width-r.width);if(cfg.freeLayout){next.x=r.x/Math.max(1,frame.width-r.width);next.y=r.y/Math.max(1,frame.height-r.height);}}
+            if(id.startsWith("free-"))groups.push(next);
+        }
+        return Object.assign({},layout,{startMods:"",centerMods:"",endMods:"",moduleGroups:groups,groupCells:cells,groupRotations:rotations});
+    }
     property Item dragItem: null
     property var dragWindow: null
     property point dragStart: Qt.point(0,0)
@@ -355,104 +420,76 @@ Scope {
     property point groupOrigin: Qt.point(0,0)
     property double ignoreClickUntil: 0
     function beginModuleDrag(slot, point) {
-        if (!slot.hostWindow) return;
-        for (const calendar of calendarControllers) if (calendar) calendar.calOpen = false;
-        processPopup.close();
-        if (notificationController) notificationController.panelOpen = false;
-        if (powerController) powerController.closeMenu();
-        if (volumeController) volumeController.closeAll();
-        dragWindow = slot.hostWindow; dragStart = slot.mapToItem(dragWindow.contentItem,point.x,point.y);
-        dragPoint = dragStart; dragItem = slot; mergePanel = null;
+        if(!slot.hostWindow)return;
+        for(const calendar of calendarControllers)if(calendar)calendar.calOpen=false;
+        processPopup.close();if(notificationController)notificationController.panelOpen=false;
+        if(powerController)powerController.closeMenu();if(volumeController)volumeController.closeAll();
+        rememberDrag();dragWindow=slot.hostWindow;dragStart=slot.mapToItem(dragWindow.contentItem,point.x,point.y);
+        dragPoint=dragStart;dragGrip=Qt.point(point.x,point.y);dragItem=slot;mergePanel=null;recordDragTargets(dragWindow);
+        layoutPriority=sectionOf(slot.modelData);layoutAxis=vertical?"y":"x";
     }
-    function updateModuleDrag(slot, point) {
-        if (dragItem !== slot || !dragWindow) return;
-        dragPoint = slot.mapToItem(dragWindow.contentItem,point.x,point.y);
-        const along = vertical ? dragPoint.y : dragPoint.x;
-        const half = (vertical ? slot.height : slot.width) / 2;
-        mergePanel = null; mergeAnchor=""; previewCells=({});
-        for (const panel of bubblePanels) {
-            if (!panel || !panel.hostWindow || panel.hostWindow !== dragWindow || !panel.visible) continue;
-            if (panel.model.length === 1 && panel.model[0] === slot.modelData) continue;
-            const p = panel.mapToItem(dragWindow.contentItem,0,0);
-            const start = vertical ? p.y : p.x, size = vertical ? panel.height : panel.width;
-            const near = cfg.freeLayout
-                ? dragPoint.x >= p.x-16 && dragPoint.x <= p.x+panel.width+16 && dragPoint.y >= p.y-16 && dragPoint.y <= p.y+panel.height+16
-                : along+half>=start-12 && along-half<=start+size+12;
-            if(near && cfg.autoGroup) {
-                mergePanel=panel;
-                const candidates=moduleSlots.filter(s=>s&&s.hostWindow===dragWindow&&panel.model.includes(s.modelData)&&s!==slot&&s.visible);
-                let distance=Infinity;
-                for(const other of candidates) {const p=other.mapToItem(dragWindow.contentItem,other.width/2,other.height/2);const d=Math.hypot(dragPoint.x-p.x,dragPoint.y-p.y);if(d<distance){distance=d;mergeAnchor=other.modelData;const dx=dragPoint.x-p.x,dy=dragPoint.y-p.y;mergeDirection=Math.abs(dx)>Math.abs(dy)?(dx<0?"left":"right"):(dy<0?"top":"bottom");}}
-                const next=BarLayout.regroup(cfg,moduleIds,slot.modelData,panel.groupId,0.5,undefined,mergeAnchor,mergeDirection,vertical);
-                previewCells=(next.groupCells||{})[panel.groupId]||{};break;
-            }
-        }
+    function updateModuleDrag(slot,point) {
+        if(dragItem!==slot || !dragWindow)return;
+        dragPoint=slot.mapToItem(dragWindow.contentItem,point.x,point.y);
+        if(Math.hypot(dragPoint.x-dragStart.x,dragPoint.y-dragStart.y)>6)dragMoved=true;
+        if(dragMoved)findMerge([slot.modelData]);
     }
-    function cancelModuleDrag() { if (dragItem) ignoreClickUntil = Date.now()+250; dragItem=null; dragWindow=null; mergePanel=null; previewCells=({}); dragGroupId=""; }
+    function cancelModuleDrag(commit) {
+        if(dragItem || dragGroupId)ignoreClickUntil=Date.now()+250;
+        if(!commit && dragSavedCells!==null){cfg.groupCells=dragSavedCells;cfg.groupRotations=dragSavedRotations;}
+        dragItem=null;dragGroupId="";dragWindow=null;mergePanel=null;previewCells=({});dragMoved=false;dragSavedCells=null;dragSavedRotations=null;dragTargets=({});dragModuleTargets=({});
+    }
     function finishModuleDrag() {
-        if (!dragItem || !dragWindow) { cancelModuleDrag(); return; }
-        const id=dragItem.modelData, item=dragItem, window=dragWindow, target=mergePanel;
-        const along=vertical ? dragPoint.y : dragPoint.x;
-        let groupId, position=0.5, index;
-        if (target) {
-            groupId=target.groupId; const others=target.model.filter(x => x !== id); index=others.length;
-            for (let i=0;i<others.length;i++) {
-                const other=moduleSlots.find(s => s && s.hostWindow===window && s.modelData===others[i]);
-                if (!other) continue;
-                const p=other.mapToItem(window.contentItem,0,0), center=(vertical ? p.y+other.height/2 : p.x+other.width/2);
-                if (along<center) { index=i; break; }
-            }
-        } else {
-            groupId="free-"+Date.now();
-            const extent=vertical ? window.height : window.width, size=vertical ? item.height : item.width;
-            position=Math.max(0,Math.min(1,(along-size/2)/Math.max(1,extent-size)));
-        }
-        const layout=BarLayout.regroup(cfg,moduleIds,id,groupId,position,index,mergeAnchor,mergeDirection,vertical);
-        if(cfg.freeLayout && !target) {
-            const others=bubblePanels.filter(p=>p&&p.hostWindow===window&&p.visible&&p.model.some(x=>x!==id)).map(p=>{const r=p.mapToItem(window.contentItem,0,0);return {x:r.x,y:r.y,width:p.width,height:p.height};});
-            const pos=BarLayout.avoid(dragPoint.x-item.width/2,dragPoint.y-item.height/2,item.width+4,item.height+4,others,window.width,window.height);
-            const group=layout.moduleGroups.find(g=>g.id===groupId);
-            group.x=pos.x/Math.max(1,window.width-item.width-4);group.y=pos.y/Math.max(1,window.height-item.height-4);
-        }
-        cancelModuleDrag(); applyLayout(layout);
+        if(!dragItem || !dragWindow || !dragMoved){cancelModuleDrag();return;}
+        const item=dragItem,id=item.modelData,window=dragWindow,target=mergePanel;
+        const solved=groupPositions(window,window.layoutFrame),newId=target?target.groupId:"free-"+Date.now();
+        const layout=BarLayout.regroup(cfg,moduleIds,id,newId,0.5,undefined,mergeAnchor,mergeDirection,vertical);
+        const result=persistPositions(layout,window,solved,target?{}:{"__module-drag":newId});
+        layoutPriority=newId;cancelModuleDrag(true);applyLayout(result);
     }
-
-    function beginGroupDrag(panel, point) {
+    function beginGroupDrag(panel,point) {
         if(dragItem || dragGroupId)return;
-        dragWindow=panel.hostWindow;dragGroupId=panel.groupId;
+        rememberDrag();dragWindow=panel.hostWindow;dragGroupId=panel.groupId;
         dragStart=panel.mapToItem(dragWindow.contentItem,point.x,point.y);dragPoint=dragStart;
-        groupOrigin=panel.mapToItem(dragWindow.contentItem,0,0);
-        processPopup.close();
+        recordDragTargets(dragWindow);groupOrigin=panel.mapToItem(dragWindow.contentItem,0,0);dragGrip=Qt.point(point.x,point.y);
+        layoutPriority=panel.groupId;layoutAxis=vertical?"y":"x";processPopup.close();
     }
     function updateGroupDrag(panel,point) {
         if(dragGroupId!==panel.groupId)return;
         dragPoint=panel.mapToItem(dragWindow.contentItem,point.x,point.y);
+        if(Math.hypot(dragPoint.x-dragStart.x,dragPoint.y-dragStart.y)>6)dragMoved=true;
+        if(dragMoved)findMerge(panel.model);
     }
     function finishGroupDrag(panel) {
         if(dragGroupId!==panel.groupId)return;
-        const window=dragWindow,id=dragGroupId;
-        const x=Math.max(0,Math.min(window.width-panel.width,groupOrigin.x+dragPoint.x-dragStart.x));
-        const y=Math.max(0,Math.min(window.height-panel.height,groupOrigin.y+dragPoint.y-dragStart.y));
-        const position=vertical?y/Math.max(1,window.height-panel.height):x/Math.max(1,window.width-panel.width);
-        const result=BarLayout.relocate(cfg,moduleIds,id,position,cfg.freeLayout?x/Math.max(1,window.width-panel.width):undefined,cfg.freeLayout?y/Math.max(1,window.height-panel.height):undefined,vertical);
-        cancelModuleDrag();if(result)applyLayout(result);
+        if(!dragMoved){cancelModuleDrag();return;}
+        const window=dragWindow,id=dragGroupId,solved=groupPositions(window,window.layoutFrame);let result,rename={};
+        if(mergePanel)result=BarLayout.mergeGroups(cfg,moduleIds,id,mergePanel.groupId,mergeAnchor,mergeDirection,vertical);
+        else {result=BarLayout.relocate(cfg,moduleIds,id,0.5,undefined,undefined,vertical);const moved=result.moduleGroups[result.moduleGroups.length-1];rename[id]=moved.id;}
+        result=persistPositions(result,window,solved,rename);cancelModuleDrag(true);if(result)applyLayout(result);
     }
-
-    function groupPositions(window, frame) {
-        const placed=[], output={};
-        for(const group of layoutGroups.slice().sort((a,b)=>(a.id===dragGroupId?-1:b.id===dragGroupId?1:0))) {
+    function layoutSolution(window,frame) {
+        const rectangles=[];let guides=[];
+        for(const group of layoutGroups){
             const panel=bubblePanels.find(p=>p&&p.hostWindow===window&&p.groupId===group.id);
             if(!panel || !panel.visible)continue;
+            if(dragMoved&&dragItem&&dragWindow===window&&panel.model.length===1&&panel.model[0]===dragItem.modelData&&!mergePanel)continue;
             const width=panel.width,height=panel.height;
-            let x=group.x!==undefined ? Math.max(0,Math.min(1,group.x))*(frame.width-width) : vertical ? (cfg.position==="right" ? frame.width-width : 0) : group.position*(frame.width-width);
-            let y=group.y!==undefined ? Math.max(0,Math.min(1,group.y))*(frame.height-height) : vertical ? group.position*(frame.height-height) : (cfg.position==="bottom" ? frame.height-height : 0);
-            if(!cfg.freeLayout) {x=vertical?0:group.position*(frame.width-width);y=vertical?group.position*(frame.height-height):0;}
-            if(group.id===dragGroupId && dragWindow===window){x=groupOrigin.x+dragPoint.x-dragStart.x-frame.x;y=groupOrigin.y+dragPoint.y-dragStart.y-frame.y;}
-            const position=BarLayout.avoid(x,y,width,height,placed,frame.width,frame.height);
-            placed.push({x:position.x,y:position.y,width:width,height:height});output[group.id]=position;
+            let x=group.x!==undefined?group.x*Math.max(0,frame.width-width):vertical?(cfg.position==="right"?frame.width-width:0):group.position*(frame.width-width);
+            let y=group.y!==undefined?group.y*Math.max(0,frame.height-height):vertical?group.position*(frame.height-height):(cfg.position==="bottom"?frame.height-height:0);
+            if(!cfg.freeLayout){x=vertical?0:group.position*(frame.width-width);y=vertical?group.position*(frame.height-height):0;}
+            if(group.id===dragGroupId && dragWindow===window && dragMoved){x=dragPoint.x-dragGrip.x-frame.x;y=dragPoint.y-dragGrip.y-frame.y;}
+            rectangles.push({id:group.id,x:x,y:y,width:width,height:height});
         }
-        return output;
+        if(dragItem && dragWindow===window && dragMoved && !mergePanel)rectangles.push({id:"__module-drag",x:dragPoint.x-dragGrip.x-frame.x-root.bubblePadding,y:dragPoint.y-dragGrip.y-frame.y-root.bubblePadding,width:dragItem.width+2*root.bubblePadding,height:dragItem.height+2*root.bubblePadding});
+        const moving=rectangles.find(r=>r.id===(dragGroupId||"__module-drag"));
+        if(moving && cfg.freeLayout && dragMoved && !mergePanel){const snap=BarLayout.snap(moving,rectangles.filter(r=>r!==moving),frame.width,frame.height,10);moving.x=snap.x;moving.y=snap.y;guides=snap.guides;}
+        let axis=layoutAxis;
+        if(moving && cfg.freeLayout && vertical && moving.x<root.panelThick+10)axis="x";
+        const solution=BarLayout.solve(rectangles,frame.width,frame.height,mergePanel?mergePanel.groupId:moving?moving.id:layoutPriority,axis,2,mergePanel&&dragGroupId?[dragGroupId]:[]);
+        solution.guides=guides;return solution;
     }
+    function groupPositions(window,frame) {return layoutSolution(window,frame).positions;}
 
     // ───────────────────────── State / IPC ─────────────────────────
     property bool barVisible: true
@@ -486,7 +523,7 @@ Scope {
     IpcHandler {
         target: "bar"
         function layoutState(): string {
-            return JSON.stringify({appDragging:root.appDragItem!==null,freeLayout:cfg.freeLayout,reserveSpace:cfg.reserveSpace,groupDrag:root.dragGroupId,locale:LocaleState.language,date:LocaleState.locale.toString(new Date(),"dddd, d MMMM yyyy"),groups:root.layoutGroups,panels:root.bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>({id:p.groupId,geometry:root.taskRect(p),items:p.model})),calendars:root.calendarControllers.filter(c => c && c.clockTarget).map(c => ({open:c.calOpen,geometry:root.taskRect(c.clockTarget)})),dragging:root.dragItem ? root.dragItem.modelData : "",
+            return JSON.stringify({appDragging:root.appDragItem!==null,freeLayout:cfg.freeLayout,reserveSpace:cfg.reserveSpace,nativeReservation:root.nativeReservation,groupDrag:root.dragGroupId,mergeTarget:root.mergePanel?root.mergePanel.groupId:"",locale:LocaleState.language,date:LocaleState.locale.toString(new Date(),"dddd, d MMMM yyyy"),groups:root.layoutGroups,panels:root.bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>({id:p.groupId,selected:root.dragGroupId===p.groupId,border:p.border.width,geometry:root.taskRect(p),items:p.model})),calendars:root.calendarControllers.filter(c => c && c.clockTarget).map(c => ({open:c.calOpen,geometry:root.taskRect(c.clockTarget)})),dragging:root.dragItem ? root.dragItem.modelData : "",
                 modules:root.moduleSlots.filter(s => s && s.hostWindow).map(s => ({id:s.modelData,holding:s.holding,geometry:root.taskRect(s)}))});
         }
         function nativeAppDrag(address:string,token:string):void {
@@ -650,8 +687,10 @@ Scope {
     // States: hover · pressed · active (accent) · warning (danger) · disabled.
 
     component Lane: GridLayout {
+        id:genericLane
         property int gap: 0
-        flow: root.vertical ? GridLayout.TopToBottom : GridLayout.LeftToRight
+        property bool vertical: root.moduleIsVertical(genericLane)
+        flow: vertical ? GridLayout.TopToBottom : GridLayout.LeftToRight
         rowSpacing: gap
         columnSpacing: gap
     }
@@ -796,7 +835,7 @@ Scope {
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
             cursorShape: it.interactive && !it.disabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onPressed: mouse => { tipper.suppressed = true; tipper.shown = false;
+            onPressed: mouse => { if(mouse.button===Qt.RightButton && (root.dragItem || root.dragGroupId))return; tipper.suppressed = true; tipper.shown = false;
                 if(mouse.button===Qt.LeftButton && (mouse.modifiers & Qt.MetaModifier) && it.restoreDragEligible){preventStealing=true;root.beginAppDrag(it,Qt.point(mouse.x,mouse.y));}
             }
             function slotParent() { let p=it; while(p) { if (p.moduleSlotMarker === true) return p; p=p.parent; } return null; }
@@ -805,7 +844,7 @@ Scope {
                 const slot=slotParent(); if(slot) { preventStealing=true; root.beginModuleDrag(slot,ma.mapToItem(slot,mouse.x,mouse.y)); mouse.accepted=true; }
             }
             onPositionChanged: mouse => { if(root.appDragItem===it){root.updateAppDrag(it,Qt.point(mouse.x,mouse.y));return;} const slot=slotParent(); if (slot && root.dragItem === slot) root.updateModuleDrag(slot,ma.mapToItem(slot,mouse.x,mouse.y)); }
-            onReleased: { if(root.appDragItem===it&&!root.appDragNative)root.finishAppDrag(); if (root.dragItem === slotParent()) root.finishModuleDrag(); preventStealing=false; }
+            onReleased: mouse => { if(mouse.button!==Qt.LeftButton)return; if(root.appDragItem===it&&!root.appDragNative)root.finishAppDrag(); if (root.dragItem === slotParent()) root.finishModuleDrag(); preventStealing=false; }
             onCanceled: { if(root.appDragItem===it&&!root.appDragNative)root.appDragItem=null; if (root.dragItem === slotParent()) root.cancelModuleDrag(); preventStealing=false; }
             onClicked: mouse => {
                 if (it.disabled || root.dragItem || root.appDragItem || Date.now() < root.ignoreClickUntil) return;
@@ -831,6 +870,7 @@ Scope {
     // Icon / text module built on Interactive
     component Mod: Interactive {
         id: mod
+        readonly property bool moduleVertical: root.moduleIsVertical(mod)
         property string mid: ""          // set by Slot; used by generic icon modules
         property string text: ""
         property string vtext: text
@@ -846,19 +886,19 @@ Scope {
         property int padX: cfg.modPad
 
         readonly property color fg: warning ? Theme.danger : active ? Theme.accent : color
-        readonly property string shown: root.vertical ? vtext : text
-        readonly property string shownGlyph: root.vertical ? vglyph : glyph
+        readonly property string shown: mod.moduleVertical ? vtext : text
+        readonly property string shownGlyph: mod.moduleVertical ? vglyph : glyph
 
         Layout.alignment: Qt.AlignCenter
-        implicitWidth: root.vertical ? root.panelThick : content.implicitWidth + padX
-        implicitHeight: root.vertical ? Math.max(20, content.implicitHeight + 8)
+        implicitWidth: mod.moduleVertical ? root.panelThick : content.implicitWidth + padX
+        implicitHeight: mod.moduleVertical ? Math.max(20, content.implicitHeight + 8)
                                       : Math.max(root.panelThick - 2, content.implicitHeight)
 
         GridLayout {
             id: content
             anchors.centerIn: parent
-            anchors.verticalCenterOffset: root.vertical ? 0 : mod.yOffset
-            flow: root.vertical ? GridLayout.TopToBottom : GridLayout.LeftToRight
+            anchors.verticalCenterOffset: mod.moduleVertical ? 0 : mod.yOffset
+            flow: mod.moduleVertical ? GridLayout.TopToBottom : GridLayout.LeftToRight
             rowSpacing: 2
             columnSpacing: mod.spacing
 
@@ -900,6 +940,9 @@ Scope {
         z: root.dragItem === moduleSlot ? 1000 : 0
         readonly property bool holding: root.dragItem === moduleSlot
         readonly property bool moduleSlotMarker: true
+        property var owningPanel: null
+        readonly property bool moduleVertical: root.vertical !== (!!((cfg.groupRotations[(owningPanel?owningPanel.groupId:root.sectionOf(modelData))]||0)%2))
+        width: implicitWidth; height: implicitHeight
         Rectangle {
             anchors.fill: parent; anchors.margins: -1; radius: Theme.radius
             color: "transparent"; border.width: 2; border.color: Theme.accent
@@ -918,48 +961,55 @@ Scope {
         id: panel
         readonly property var hostWindow: QsWindow.window
         property string groupId: ""
-        Behavior on x {enabled:root.dragGroupId!==groupId;NumberAnimation{duration:100}}
-        Behavior on y {enabled:root.dragGroupId!==groupId;NumberAnimation{duration:100}}
-        property Region inputRegion: Region { item: panel }
-        readonly property var cellMap: BarLayout.cells(cfg,{id:groupId,items:model},root.vertical)
-        Component.onCompleted: root.bubblePanels = root.bubblePanels.filter(p => p && p.objectName !== undefined).concat([panel])
-        Component.onDestruction: root.bubblePanels = root.bubblePanels.filter(p => p !== panel)
         property var model: []
         property Component clockComp: null
-        readonly property Item lane: laneItem
-
-        visible: (root.vertical ? laneItem.implicitHeight : laneItem.implicitWidth) > 0
-        width: Math.max(root.vertical ? root.panelThick : 0,laneItem.implicitWidth+12)
-        height: Math.max(!root.vertical ? root.panelThick : 0,laneItem.implicitHeight+12)
+        readonly property bool rotatedVertical: root.vertical !== (!!((cfg.groupRotations[groupId]||0)%2))
+        property Region inputRegion: Region { item: panel }
+        readonly property var cellMap: root.mergePanel===panel?root.previewCells:BarLayout.cells(cfg,{id:groupId,items:model},root.vertical)
+        readonly property var baseMetrics: {
+            const entries=[];
+            for(const slot of root.moduleSlots){if(!slot || slot.hostWindow!==hostWindow || !root.modVisible(slot.modelData) || !model.includes(slot.modelData))continue;
+                const task=slot.item&&slot.item.requestedLength!==undefined;
+                entries.push({id:slot.modelData,width:task?slot.item.baseWidth:slot.implicitWidth,height:task?slot.item.baseHeight:slot.implicitHeight});}
+            return BarLayout.measure(BarLayout.cells(cfg,{id:groupId,items:model},root.vertical),entries,0);
+        }
+        readonly property var metrics: {
+            const entries=[];
+            for(const slot of root.moduleSlots){if(!slot || slot.hostWindow!==hostWindow || !root.modVisible(slot.modelData))continue;
+                const own=model.includes(slot.modelData),ghost=root.mergePanel===panel&&root.previewCells[slot.modelData];
+                if((own || ghost) && !(root.dragMoved&&root.dragItem===slot&&root.mergePanel!==panel&&model.length>1))entries.push({id:slot.modelData,width:slot.implicitWidth,height:slot.implicitHeight});}
+            return BarLayout.measure(cellMap,entries,0);
+        }
+        Component.onCompleted: root.bubblePanels=root.bubblePanels.filter(p=>p&&p.objectName!==undefined).concat([panel])
+        Component.onDestruction: root.bubblePanels=root.bubblePanels.filter(p=>p!==panel)
+        visible: metrics.width>0 && metrics.height>0
+        width: Math.max(rotatedVertical?root.panelThick:0,metrics.width+2*root.bubblePadding)
+        height: Math.max(!rotatedVertical?root.panelThick:0,metrics.height+2*root.bubblePadding)
+        opacity:root.dragMoved&&root.dragItem&&model.length===1&&model[0]===root.dragItem.modelData?0:1
         radius: root.barRadius
-        color: root.joined && !cfg.freeLayout ? "transparent" : root.bgColor
-        border.width: root.mergePanel === panel ? 2 : cfg.border && !root.joined ? 1 : 0
-        border.color: root.mergePanel === panel ? Theme.accent : root.borderColor
-
+        color: root.joined&&!cfg.freeLayout?"transparent":root.bgColor
+        border.width: root.dragGroupId===groupId||root.mergePanel===panel?2:cfg.border&&!root.joined?1:0
+        border.color: root.dragGroupId===groupId||root.mergePanel===panel?Theme.accent:root.borderColor
+        Behavior on x {enabled:root.dragGroupId!==groupId;NumberAnimation{duration:100}}
+        Behavior on y {enabled:root.dragGroupId!==groupId;NumberAnimation{duration:100}}
         MouseArea {
-            id: bubbleDrag
-            anchors.fill:parent;acceptedButtons:Qt.LeftButton;pressAndHoldInterval:300
+            id:bubbleDrag;anchors.fill:parent;acceptedButtons:Qt.LeftButton|Qt.RightButton;pressAndHoldInterval:300
+
             property point pressedAt:Qt.point(0,0)
-            onPressed: mouse=>pressedAt=Qt.point(mouse.x,mouse.y)
-            onPressAndHold: mouse=>root.beginGroupDrag(panel,Qt.point(mouse.x,mouse.y))
-            onPositionChanged: mouse=>{
-                if(!pressed)return;
-                if(!root.dragGroupId && Math.hypot(mouse.x-pressedAt.x,mouse.y-pressedAt.y)>6)root.beginGroupDrag(panel,pressedAt);
-                root.updateGroupDrag(panel,Qt.point(mouse.x,mouse.y));
-            }
-            onReleased:root.finishGroupDrag(panel)
+            onPressed:mouse=>{if(mouse.button===Qt.RightButton){if(!root.dragGroupId&&!root.dragItem)root.openSettings();return;}pressedAt=Qt.point(mouse.x,mouse.y);}
+            onPressAndHold:mouse=>{if(mouse.button===Qt.LeftButton)root.beginGroupDrag(panel,Qt.point(mouse.x,mouse.y));}
+            onPositionChanged:mouse=>{if(!(pressedButtons&Qt.LeftButton))return;if(!root.dragGroupId&&Math.hypot(mouse.x-pressedAt.x,mouse.y-pressedAt.y)>6)root.beginGroupDrag(panel,pressedAt);root.updateGroupDrag(panel,Qt.point(mouse.x,mouse.y));}
+            onReleased:mouse=>{if(mouse.button===Qt.LeftButton)root.finishGroupDrag(panel);}
             onCanceled:root.cancelModuleDrag()
         }
-        Lane {
-            id: laneItem
-            flow: GridLayout.LeftToRight
-            anchors.centerIn: parent
+        Item {
+            id:laneItem;anchors.centerIn:parent;width:panel.metrics.width;height:panel.metrics.height
             Repeater {
-                model: panel.model
-                delegate: Slot {
-                    clockComp: panel.clockComp
-                    readonly property var cell: root.mergePanel===panel && root.dragItem && modelData!==root.dragItem.modelData && root.previewCells[modelData] ? root.previewCells[modelData] : panel.cellMap[modelData]||{x:0,y:0}
-                    Layout.row: cell.y; Layout.column: cell.x
+                model:panel.model
+                delegate:Slot {
+                    clockComp:panel.clockComp;owningPanel:panel
+                    readonly property var position:panel.metrics.positions[modelData]||{x:0,y:0}
+                    x:position.x;y:position.y
                 }
             }
         }
@@ -1239,7 +1289,32 @@ Scope {
 
     // Extend the existing Open apps module, keeping its ON/START/CENTER/END controls.
     readonly property var nativeToplevels: Hyprland.toplevels.values
+    property var taskModules: []
     property var taskControls: []
+    function taskBudget(item) {
+        const window=item.window;if(!window)return 0;
+        const vertical=item.vertical,frame=window.layoutFrame,candidates=bubblePanels.filter(p=>p&&p.hostWindow===window&&p.baseMetrics.width>0&&p.baseMetrics.height>0);
+        const owner=candidates.find(p=>p.groupId===sectionOf(item.mid));
+        function band(panel) {
+            const g=layoutGroups.find(g=>g.id===panel.groupId)||{},extent=(vertical?panel.baseMetrics.width:panel.baseMetrics.height)+2*root.bubblePadding;
+            const available=vertical?window.screen.width:window.screen.height;
+            const coordinate=cfg.freeLayout?(vertical?g.x:g.y):0;
+            return {start:(coordinate||0)*Math.max(0,available-extent),extent:extent};
+        }
+        const own=owner?band(owner):{start:0,extent:window.screen.width};
+        const panels=candidates.filter(p=>{const b=band(p);return b.start<own.start+own.extent&&b.start+b.extent>own.start;});
+        let total=vertical?window.screen.height:window.screen.width;
+        // Use the group's base dimensions, independent of allocated task length.
+        for(const panel of panels)total-=(vertical?panel.baseMetrics.height:panel.baseMetrics.width)+2*root.bubblePadding+2;
+        const peers=taskModules.filter(t=>t&&t.window===window&&t.vertical===vertical&&!t.collapsed&&t.count>0&&panels.some(p=>p.groupId===sectionOf(t.mid))).sort((a,b)=>Number(sectionOf(b.mid)===layoutPriority)-Number(sectionOf(a.mid)===layoutPriority));
+        total=Math.max(0,total);
+        for(let i=0;i<peers.length;i++){
+            const peer=peers[i],minimum=peers.slice(i+1).reduce((sum,t)=>sum+t.slot+2,0),capacity=Math.max(peer.slot+2,Math.min(peer.requestedLength,total-minimum));
+            if(peer===item)return capacity;
+            total-=capacity;
+        }
+        return 0;
+    }
     property var taskButtons: []
     property var appDragItem: null
     property double appDragClosedToken: 0
@@ -1311,6 +1386,10 @@ Scope {
         Lane {
             id: taskModule
             property string mid: "tasks"
+            Component.onCompleted:root.taskModules=root.taskModules.filter(t=>t&&t.objectName!==undefined).concat([taskModule])
+            Component.onDestruction:root.taskModules=root.taskModules.filter(t=>t!==taskModule)
+            readonly property real baseWidth:vertical?Math.max(slot,taskToggle.implicitWidth):taskToggle.implicitWidth
+            readonly property real baseHeight:vertical?taskToggle.implicitHeight:Math.max(slot,taskToggle.implicitHeight)
             readonly property bool group: mid.startsWith("minigroup-")
             readonly property string groupName: group ? ((root.defMap[mid] || {}).l || "Groupe") : "Open apps"
             readonly property bool collapsed: group ? cfg.collapsedGroups[mid] !== false : cfg.tasksCollapsed
@@ -1320,14 +1399,15 @@ Scope {
                 const handle=t.HyprlandToplevel.handle, name=handle && handle.workspace ? handle.workspace.name : "";
                 if(group)return name === "special:minimized-"+mid.slice(10);
                 return !cfg.windowGroupsEnabled || !cfg.windowGroups.some(g=>name === "special:minimized-"+g.id);
-            }); }
+            }).map((t,i)=>({t:t,i:i,min:t.HyprlandToplevel.handle&&t.HyprlandToplevel.handle.workspace&&t.HyprlandToplevel.handle.workspace.name.startsWith("special:minimized")})).sort((a,b)=>Number(b.min)-Number(a.min)||a.i-b.i).map(x=>x.t); }
             gap: 2
             readonly property int count: taskModule.windows.length
             readonly property int iconPixels: Math.round(Math.max(12, Math.min(32, cfg.taskIconSize)) * cfg.scale)
-            readonly property int slot: Math.max(root.panelThick, iconPixels + 10)
+            readonly property int slot: Math.max(root.panelThick, iconPixels + 6)
             readonly property var window: taskModule.QsWindow.window
-            readonly property real outputLength: window && window.screen ? (root.vertical ? window.screen.height : window.screen.width) : 800
-            readonly property real visibleLength: Math.min(count * (slot + 2), Math.max(slot, Math.min(Math.max(1, cfg.taskMaxVisible) * (slot + 2), outputLength * 0.25)))
+            readonly property real outputLength: window && window.screen ? (taskModule.vertical ? window.screen.height : window.screen.width) : 800
+            readonly property real requestedLength: collapsed?0:Math.min(count*(slot+2),Math.max(1,cfg.taskMaxVisible)*(slot+2),outputLength*0.5)
+            readonly property real visibleLength: Math.max(0,Math.min(requestedLength,root.taskBudget(taskModule)))
             Mod {
                 id: taskToggle
                 Component.onCompleted: root.addTaskItem(taskToggle, true)
@@ -1342,7 +1422,7 @@ Scope {
                 onPrimary: {
                     if(taskModule.group) { const value=Object.assign({},cfg.collapsedGroups);value[taskModule.mid]=!taskModule.collapsed;cfg.collapsedGroups=value; }
                     else cfg.tasksCollapsed=!cfg.tasksCollapsed;
-                    root.save();
+                    root.layoutPriority=root.sectionOf(taskModule.mid);root.layoutAxis=taskModule.vertical?"y":"x";root.save();
                 }
             }
             Flickable {
@@ -1350,26 +1430,27 @@ Scope {
                 readonly property var hostWindow: QsWindow.window
                 Component.onCompleted: root.taskStrips = root.taskStrips.filter(t => t && t.objectName !== undefined).concat([appStrip])
                 Component.onDestruction: root.taskStrips = root.taskStrips.filter(s => s !== appStrip)
-                visible: !taskModule.collapsed && taskModule.count > 0
-                implicitWidth: root.vertical ? taskModule.slot : taskModule.visibleLength
-                implicitHeight: root.vertical ? taskModule.visibleLength : taskModule.slot
-                contentWidth: root.vertical ? width : appLane.implicitWidth
-                contentHeight: root.vertical ? appLane.implicitHeight : height
+                visible: !taskModule.collapsed && taskModule.count > 0 && taskModule.visibleLength > 0
+                implicitWidth: taskModule.vertical ? taskModule.slot : taskModule.visibleLength
+                implicitHeight: taskModule.vertical ? taskModule.visibleLength : taskModule.slot
+                contentWidth: taskModule.vertical ? width : appLane.implicitWidth
+                contentHeight: taskModule.vertical ? appLane.implicitHeight : height
                 clip: true
                 interactive: root.dragItem === null && root.appDragItem === null
                 boundsBehavior: Flickable.StopAtBounds
-                flickableDirection: root.vertical ? Flickable.VerticalFlick : Flickable.HorizontalFlick
+                flickableDirection: taskModule.vertical ? Flickable.VerticalFlick : Flickable.HorizontalFlick
                 WheelHandler {
                     target: null
                     onWheel: event => {
                         const delta = (event.angleDelta.y || event.angleDelta.x) / 120 * (taskModule.slot + 2);
-                        if (root.vertical) appStrip.contentY = Math.max(0, Math.min(Math.max(0, appStrip.contentHeight - appStrip.height), appStrip.contentY - delta));
+                        if (taskModule.vertical) appStrip.contentY = Math.max(0, Math.min(Math.max(0, appStrip.contentHeight - appStrip.height), appStrip.contentY - delta));
                         else appStrip.contentX = Math.max(0, Math.min(Math.max(0, appStrip.contentWidth - appStrip.width), appStrip.contentX - delta));
                         event.accepted = true;
                     }
                 }
                 Lane {
                     id: appLane
+                    vertical:taskModule.vertical
                     gap: 2
                     Repeater {
                         model: taskModule.windows
@@ -1419,11 +1500,13 @@ Scope {
     Component {
         id: mediaC
         Interactive {
+            id:mediaButton
+            readonly property bool moduleVertical:root.moduleIsVertical(mediaButton)
             readonly property bool playing: Marquee.player !== null && Marquee.player.isPlaying === true
             readonly property real len: Math.min(Marquee.textW, Marquee.maxW)   // visible text length
 
-            implicitWidth: root.vertical ? root.panelThick : len + 20
-            implicitHeight: root.vertical ? len + 20 : 18
+            implicitWidth: mediaButton.moduleVertical ? root.panelThick : len + 20
+            implicitHeight: mediaButton.moduleVertical ? len + 20 : 18
 
             tip: Marquee.text
             primaryHint: playing ? "Pause" : "Play"
@@ -1438,33 +1521,43 @@ Scope {
                 anchors.centerIn: parent
                 width: parent.len
                 height: 18
-                rotation: root.vertical ? (cfg.position === "left" ? -90 : 90) : 0
+                rotation: mediaButton.moduleVertical ? (cfg.position === "left" ? -90 : 90) : 0
             }
         }
     }
 
     Component {
+        id: opacityC
+        Mod {
+            id:opacityButton;glyph:"◐";glyphSize:root.sz.icon
+            tip:LocaleState.tr("Opacité des fenêtres","Window opacity")
+            primaryHint:LocaleState.tr("Régler l’opacité","Adjust opacity")
+            secondaryHint:LocaleState.tr("Déverrouiller toutes les fenêtres","Unlock all windows")
+            scrollHint:LocaleState.tr("Régler l’opacité du bureau","Adjust workspace opacity")
+            onPrimary:if(root.volumeController)root.volumeController.showOpacity(opacityButton)
+            onHoveredChanged:if(hovered&&root.opacityController)root.opacityController.prepareOsd()
+            onScrolled:delta=>{if(root.opacityController)root.opacityController.adjustOsd(delta/120);if(root.volumeController)root.volumeController.showOpacity(opacityButton);}
+            onSecondary:if(root.opacityController)root.opacityController.resetAll()
+        }
+    }
+    Component {
         id: brightnessC
         Mod {
             id: brightnessButton
             glyphSize: root.sz.icon
-            glyph: "󰃠"
-            tip: "Luminosité : " + Math.round(BrightnessState.value*100) + "%"
-            primaryHint: "Ouvrir les paramètres de luminosité"
-            scrollHint: "Régler la luminosité"
+            glyph: "☀"
+            tip: LocaleState.tr("Luminosité : ", "Brightness: ") + Math.round(BrightnessState.value*100) + "%"
+            primaryHint: LocaleState.tr("Ouvrir les paramètres de luminosité", "Open brightness settings")
+            scrollHint: LocaleState.tr("Régler la luminosité", "Adjust brightness")
             Component.onCompleted: if(root.volumeController)root.volumeController.registerBrightnessButton(brightnessButton)
             Component.onDestruction: if(root.volumeController)root.volumeController.unregisterBrightnessButton(brightnessButton)
             onPrimary: root.run("qs ipc call settings brightness")
-            property int queuedBrightness: 0
-            function applyWheel() {
-                if(brightnessWheel.running||queuedBrightness===0)return;
-                const delta=Math.max(-20,Math.min(20,queuedBrightness));queuedBrightness-=delta;
-                brightnessWheel.command=["python3",Quickshell.env("HOME")+"/.config/quickshell/scripts/brightness.py","--output",brightnessButton.hostWindow.screen.name,"--delta",String(delta),"--osd"];
-                brightnessWheel.running=true;
+            secondaryHint: LocaleState.tr("Éteindre / rétablir la luminosité","Zero / restore brightness")
+            onSecondary: { BrightnessState.toggle(brightnessButton.hostWindow.screen.name);if(root.volumeController)root.volumeController.showBrightness(brightnessButton); }
+            onScrolled: delta => {
+                BrightnessState.adjust((delta/120)*cfg.volStep,brightnessButton.hostWindow.screen.name);
+                if(root.volumeController)root.volumeController.showBrightness(brightnessButton);
             }
-            onScrolled: delta => {queuedBrightness+=delta>0?5:-5;brightnessQueue.restart();}
-            Timer {id:brightnessQueue;interval:80;onTriggered:brightnessButton.applyWheel()}
-            Process {id:brightnessWheel;onExited:{brightnessQueue.restart();if(brightnessButton.queuedBrightness===0)BrightnessState.refresh(brightnessButton.hostWindow.screen.name);}}
         }
     }
 
@@ -1523,6 +1616,7 @@ Scope {
             id: bar
             required property var modelData
             screen: modelData
+            readonly property Item layoutFrame: frame
 
             anchors {
                 top: cfg.freeLayout || cfg.position !== "bottom"
@@ -1532,11 +1626,11 @@ Scope {
             }
             implicitWidth: root.vertical ? Math.max(root.panelThick,...root.bubblePanels.filter(p=>p&&p.hostWindow===bar).map(p=>p.width))+root.effEdge : 0
             implicitHeight: root.vertical ? 0 : Math.max(root.panelThick,...root.bubblePanels.filter(p=>p&&p.hostWindow===bar).map(p=>p.height))+root.effEdge
-            exclusionMode: cfg.reserveSpace && !cfg.freeLayout ? ExclusionMode.Auto : ExclusionMode.Ignore
+            exclusionMode: cfg.reserveSpace && !cfg.freeLayout && !root.nativeReservation ? ExclusionMode.Auto : ExclusionMode.Ignore
             color: "transparent"
             property Region completeRegion: Region { item: frame }
             property Region dragRegion: Region { item: root.dragWindow === bar ? frame : null }
-            mask: Region { regions: cfg.freeLayout ? root.bubblePanels.filter(p=>p&&p.hostWindow===bar&&p.visible).map(p=>p.inputRegion).concat([bar.dragRegion]) : [bar.completeRegion] }
+            mask: Region { regions: cfg.freeLayout || !root.joined ? root.bubblePanels.filter(p=>p&&p.hostWindow===bar&&p.visible).map(p=>p.inputRegion).concat([bar.dragRegion]) : [bar.completeRegion] }
             visible: root.barVisible
 
             Item {
@@ -1763,11 +1857,26 @@ Scope {
                     }
                 }
 
+                PointHandler {
+                    target:null;acceptedButtons:Qt.AllButtons
+                    property int previousButtons:Qt.NoButton
+                    onPointChanged:{const buttons=point.pressedButtons;const rotate=(buttons&Qt.RightButton)&&!(previousButtons&Qt.RightButton);previousButtons=buttons;if(rotate&&root.dragWindow===bar&&(root.dragItem||root.dragGroupId))root.rotateDrag();}
+                    onActiveChanged:if(!active)previousButtons=Qt.NoButton
+                }
                 ShaderEffectSource {
-                    visible:root.dragItem!==null&&root.dragWindow===bar
+                    visible:root.dragMoved&&root.dragItem!==null&&root.dragWindow===bar
                     sourceItem:root.dragItem;hideSource:true;live:true
                     width:root.dragItem?root.dragItem.width:0;height:root.dragItem?root.dragItem.height:0
-                    x:root.dragPoint.x-frame.x-width/2;y:root.dragPoint.y-frame.y-height/2;z:10000
+                    x:root.dragPoint.x-frame.x-root.dragGrip.x;y:root.dragPoint.y-frame.y-root.dragGrip.y;z:10000
+                }
+                Repeater {
+                    model:root.dragMoved&&root.dragWindow===bar?root.layoutSolution(bar,frame).guides:[]
+                    delegate:Rectangle {
+                        required property var modelData
+                        x:modelData.axis==="x"?modelData.value:0;y:modelData.axis==="y"?modelData.value:0
+                        width:modelData.axis==="x"?1:frame.width;height:modelData.axis==="y"?1:frame.height
+                        color:Theme.accent;opacity:0.5;z:9999
+                    }
                 }
                 Repeater {
                     model: root.layoutGroups

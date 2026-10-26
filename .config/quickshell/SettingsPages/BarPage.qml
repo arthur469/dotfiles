@@ -23,7 +23,7 @@ Item {
 
     readonly property var defaults: ({
         position: "left", style: "joined", thickness: 20, margin: 4,
-        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
+        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), groupRotations: ({}), autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
         scale: 1.0, bgOpacity: 0.5, border: false, radius: 16, calRadius: 15,
         tooltips: true, tooltipHints: true, tipDelay: 450,
         modPad: 20, wsDot: 10, wsGap: 8, wsScroll: true,
@@ -49,7 +49,8 @@ Item {
         { id: "ws",       l: "WORKSPACES" },
         { id: "tasks",    l: "OPEN APPS" },
         { id: "media",    l: "MEDIA" },
-        { id: "brightness", l: "LUMINOSITÉ" },
+        {id:"opacity",l:LocaleState.tr("OPACITÉ","OPACITY")},
+        { id: "brightness", l: LocaleState.tr("LUMINOSITÉ","BRIGHTNESS") },
         { id: "volume",   l: "VOLUME" },
         { id: "battery",  l: "BATTERY" },
         { id: "net",      l: "NETWORK" },
@@ -97,7 +98,7 @@ Item {
         set("hidden", h.join(","))
     }
 
-    function layoutState() { return {startMods:val("startMods"),centerMods:val("centerMods"),endMods:val("endMods"),moduleGroups:val("moduleGroups"),groupCells:val("groupCells")}; }
+    function layoutState() { return {startMods:val("startMods"),centerMods:val("centerMods"),endMods:val("endMods"),moduleGroups:val("moduleGroups"),groupCells:val("groupCells"),groupRotations:val("groupRotations")}; }
     function groups() { return BarLayout.groups(layoutState(),moduleIds); }
     function listOf(sec) { const g=groups().find(g => g.id===sec); return g ? g.items.slice() : []; }
     function sectionOf(id) { const g=groups().find(g => g.items.includes(id)); return g ? g.id : "end"; }
@@ -609,28 +610,31 @@ Item {
                 topPadding: 4
                 bottomPadding: 4
                 SectionTitle { text: "MODULES" }
-                Text {
-                    text: "Rétablir la disposition d’origine"; color: Theme.textDim; font.pixelSize: 11
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.setMany({freeLayout:false,groupCells:({}),moduleGroups:[],startMods:page.defaults.startMods,centerMods:page.defaults.centerMods,endMods:page.defaults.endMods}) }
-                }
-                ToggleRow { label: "DISPOSITION LIBRE SUR L’ÉCRAN"; checked: page.val("freeLayout");onToggled: v=>page.set("freeLayout",v) }
-                Text { width:parent.width; text:"Appui long : déplacer. Approcher une bulle : regrouper. START/CENTER/END restent utiles pour revenir aux ancrages automatiques.";wrapMode:Text.WordWrap;color:Theme.textDim;font.pixelSize:11 }
-                ToggleRow {label:"REGROUPEMENT AUTOMATIQUE";checked:page.val("autoGroup");onToggled:v=>page.set("autoGroup",v)}
-                ToggleRow {label:"GROUPES DE FENÊTRES RÉDUITES";checked:page.val("windowGroupsEnabled");onToggled:v=>page.set("windowGroupsEnabled",v)}
-                ToggleRow {label:"SUPER + GLISSER VERS OPEN APPS POUR RÉDUIRE";checked:page.val("dropToMinimize");onToggled:v=>page.set("dropToMinimize",v)}
-                Text {width:parent.width;text:"Super + Ctrl + M : choisir ou créer un groupe pour la fenêtre sélectionnée. Super + Espace : flottante. Super + Maj + chiffre : autre bureau.";wrapMode:Text.WordWrap;color:Theme.textDim;font.pixelSize:11}
-                Column {
-                    visible:page.val("windowGroupsEnabled");width:parent.width;spacing:4
-                    Repeater {
-                        model:page.val("windowGroups")
-                        delegate: Text {
-                            required property var modelData
-                            text:"Retirer le groupe « "+modelData.name+" » (fenêtres conservées)";color:Theme.textDim;font.pixelSize:11
-                            MouseArea {anchors.fill:parent;onClicked:Quickshell.execDetached({command:["python3",Qt.resolvedUrl("../scripts/window-groups.py").toString().replace("file://",""),"--remove",parent.modelData.id]})}
+                Card {
+                    Column {
+                        width:parent.width;spacing:8
+                        Text {
+                            text:LocaleState.tr("Rétablir la disposition d’origine","Restore original layout");color:Theme.textDim;font.pixelSize:11
+                            MouseArea {anchors.fill:parent;cursorShape:Qt.PointingHandCursor;onClicked:page.setMany({freeLayout:false,groupCells:({}),groupRotations:({}),moduleGroups:[],startMods:page.defaults.startMods,centerMods:page.defaults.centerMods,endMods:page.defaults.endMods})}
                         }
+                        ToggleRow {label:LocaleState.tr("DISPOSITION LIBRE","FREE LAYOUT");checked:page.val("freeLayout");onToggled:v=>page.set("freeLayout",v)}
+                        ToggleRow {label:LocaleState.tr("REGROUPEMENT AUTO","AUTO GROUPING");checked:page.val("autoGroup");onToggled:v=>page.set("autoGroup",v)}
+                        ToggleRow {label:LocaleState.tr("GROUPES DE FENÊTRES RÉDUITES","MINIMIZED WINDOW GROUPS");checked:page.val("windowGroupsEnabled");onToggled:v=>page.set("windowGroupsEnabled",v)}
+                        ToggleRow {label:LocaleState.tr("GLISSER VERS OPEN APPS POUR RÉDUIRE","DRAG INTO OPEN APPS TO MINIMIZE");checked:page.val("dropToMinimize");onToggled:v=>page.set("dropToMinimize",v)}
+                        Column {
+                            visible:page.val("windowGroupsEnabled");width:parent.width;spacing:4
+                            Repeater {
+                                model:page.val("windowGroups")
+                                delegate:Text {
+                                    required property var modelData
+                                    text:LocaleState.tr("Retirer le groupe « ","Remove group “")+modelData.name+LocaleState.tr(" »","”");color:Theme.textDim;font.pixelSize:11
+                                    MouseArea {anchors.fill:parent;onClicked:Quickshell.execDetached({command:["python3",Qt.resolvedUrl("../scripts/window-groups.py").toString().replace("file://",""),"--remove",parent.modelData.id]})}
+                                }
+                            }
+                        }
+                        ToggleRow {label:LocaleState.tr("SUPER + GLISSER : RÉTABLIR LA MOSAÏQUE","SUPER + DRAG: RESTORE TILING");checked:page.val("quickFloatRetile");onToggled:v=>page.set("quickFloatRetile",v)}
                     }
                 }
-                ToggleRow { label: "FLOTTANTES RAPIDES : SUPER + GLISSER RÉTABLIT LA MOSAÏQUE";checked:page.val("quickFloatRetile");onToggled:v=>page.set("quickFloatRetile",v) }
                 Card {
                     Column {
                         width: parent.width; spacing: 4
@@ -646,17 +650,17 @@ Item {
                                     visible: modelData.id === "tasks" && page.isOn("tasks")
                                     spacing: 8
                                     ToggleRow {
-                                        label: "APPLICATIONS REPLIÉES"; checked: page.val("tasksCollapsed")
+                                        label: LocaleState.tr("APPLICATIONS REPLIÉES","COLLAPSED APPS"); checked: page.val("tasksCollapsed")
                                         onToggled: v => page.set("tasksCollapsed", v)
                                     }
                                     BarSlider {
-                                        label: "TAILLE DES ICÔNES"
+                                        label: LocaleState.tr("TAILLE DES ICÔNES","ICON SIZE")
                                         from: 12; to: 32; step: 1; unit: " px"
                                         value: page.val("taskIconSize")
                                         onMoved: v => page.set("taskIconSize", v)
                                     }
                                     BarSlider {
-                                        label: "ICÔNES VISIBLES AVANT DÉFILEMENT"
+                                        label: LocaleState.tr("ICÔNES VISIBLES AVANT DÉFILEMENT","VISIBLE ICONS BEFORE SCROLLING")
                                         from: 1; to: 12; step: 1
                                         value: page.val("taskMaxVisible")
                                         onMoved: v => page.set("taskMaxVisible", v)
@@ -666,13 +670,7 @@ Item {
                         }
                     }
                 }
-                Text {
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    text: "Appui long puis glisser pour déplacer une bulle ; rapprocher deux modules pour les regrouper. Les modifications sont enregistrées automatiquement."
-                    color: Theme.textDim
-                    font.family: Theme.fontFamily; font.pixelSize: Theme.textSizeSmall
-                }
+
             }
             // ---------------- CLOCK & CALENDAR ----------------
             Column {

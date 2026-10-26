@@ -20,11 +20,7 @@ hl.window_rule({
     opacity = "1.0 override", opaque = true,
 })
 
-hl.window_rule({
-    name = "brave-opaque",
-    match = { class = "^(brave-browser|brave-browser-beta|brave-browser-nightly)$" },
-    opacity = "1.0 override", opaque = true,
-})
+
 
 hl.window_rule({
     match = { class = "kitty" },
@@ -77,7 +73,7 @@ local function syncFullscreenOpacity(w)
     local state=tostring(w.fullscreen)..":"..tostring(w.fullscreen_client)
     if opacityFullscreenStates[w.address]==state then return end
     opacityFullscreenStates[w.address]=state
-    if w.fullscreen~=0 or w.fullscreen_client~=0 then
+    if w.fullscreen==2 or w.fullscreen_client==2 then
         local selector="address:0x"..w.address:gsub("^0x","")
         for _,prop in ipairs({"opacity","opacity_inactive","opacity_override","opacity_inactive_override","opaque"})do
             hl.dispatch(hl.dsp.window.set_prop({window=selector,prop=prop,value="1"}))

@@ -8,6 +8,22 @@ Item {
     property real value: 0
     property color accentColor: Theme.accent
     property real rowSpacing: 4
+    property real step: 0.01
+    property real displayFrom: 0
+    property real displayTo: 100
+    readonly property Item trackItem: track
+    activeFocusOnTab: true
+    Keys.onPressed: event => {
+        let next=root.value;
+        if(event.key===Qt.Key_Left || event.key===Qt.Key_Down)next-=root.step;
+        else if(event.key===Qt.Key_Right || event.key===Qt.Key_Up)next+=root.step;
+        else if(event.key===Qt.Key_Home)next=0;
+        else if(event.key===Qt.Key_End)next=1;
+        else {event.accepted=false;return;}
+        root.setFromRatio(next);root.committed(root.value);event.accepted=true;
+    }
+    function nudge(delta) {root.setFromRatio(root.value+(delta/120)*root.step);root.committed(root.value);}
+    MouseArea {anchors.fill:parent;acceptedButtons:Qt.NoButton;onWheel:wheel=>{root.nudge(wheel.angleDelta.y);wheel.accepted=true;}}
 
     // Right-aligned readout text, e.g. "+0.35" or "1.20x". Empty hides it.
     property string displayText: ""
@@ -171,7 +187,7 @@ Item {
                 Text {
                     id: bubbleText
                     anchors.centerIn: parent
-                    text: Math.round(root.value * 100) + "%"
+                    text: Math.round(root.displayFrom+root.value*(root.displayTo-root.displayFrom)) + "%"
                     color: Theme.text
                     font.family: Theme.fontFamily
                     font.pixelSize: 10
@@ -186,9 +202,10 @@ Item {
             anchors.margins: -6
             preventStealing: true
 
-            onPressed: (mouse) => root.setFromRatio(mouse.x / track.width)
+            onPressed: (mouse) => {root.forceActiveFocus();root.setFromRatio(mouse.x / track.width)}
             onPositionChanged: (mouse) => { if (pressed) root.setFromRatio(mouse.x / track.width) }
             onReleased: root.committed(root.value)
+            onWheel:wheel=>{root.nudge(wheel.angleDelta.y);wheel.accepted=true;}
         }
     }
 }

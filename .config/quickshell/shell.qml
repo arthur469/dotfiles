@@ -2,7 +2,8 @@ import Quickshell
 
 ShellRoot {
     WindowOpacity {}
-    VolumeOsd { id: volumeOsd; barPosition: desktopBar.notificationPosition }
+    OpacityControl {id:opacityControl;barPosition:desktopBar.notificationPosition;uiScale:desktopBar.config.scale}
+    VolumeOsd { id: volumeOsd; barPosition: desktopBar.notificationPosition; brightnessStep: desktopBar.config.volStep; opacityController:opacityControl }
     ScreenshotOsd {}
     SettingsWindow { id: settings }
     Notifications { id: notifications; barPosition: desktopBar.notificationPosition }
@@ -13,6 +14,7 @@ ShellRoot {
         notificationController: notifications
         powerController: power
         volumeController: volumeOsd
+        opacityController: opacityControl
 
     }
     Todo { id: todo }
