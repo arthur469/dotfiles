@@ -189,7 +189,7 @@ bind(mainMod .. " + mouse:272", function()
     dragged_window_address=w and w.address or nil
     if not quick_float_retile(w) then hl.dispatch(hl.dsp.window.drag()) end
 end, { mouse = true, non_consuming = true })
-bind(mainMod .. " + mouse:272", function()
+bind("mouse:272", function()
     if restoring_app_address then
         hl.exec_cmd("qs ipc call bar endNativeAppDrag "..restoring_app_address.." "..tostring(restoring_app_token))
         restoring_app_address=nil;return
@@ -198,7 +198,7 @@ bind(mainMod .. " + mouse:272", function()
         hl.dispatch(hl.dsp.exec_cmd("python3 " .. home .. "/.config/quickshell/scripts/window-groups.py --drop " .. dragged_window_address))
         dragged_window_address=nil
     end
-end, { release = true, non_consuming = true })
+end, { release = true, ignore_mods = true, non_consuming = true })
 bind(mainMod .. " + CTRL + M", hl.dsp.exec_cmd("python3 " .. home .. "/.config/quickshell/scripts/window-groups.py --choose"))
 
 bind(mainMod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })

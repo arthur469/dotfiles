@@ -486,7 +486,7 @@ Scope {
     IpcHandler {
         target: "bar"
         function layoutState(): string {
-            return JSON.stringify({freeLayout:cfg.freeLayout,reserveSpace:cfg.reserveSpace,groupDrag:root.dragGroupId,locale:LocaleState.language,date:LocaleState.locale.toString(new Date(),"dddd, d MMMM yyyy"),groups:root.layoutGroups,panels:root.bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>({id:p.groupId,geometry:root.taskRect(p),items:p.model})),calendars:root.calendarControllers.filter(c => c && c.clockTarget).map(c => ({open:c.calOpen,geometry:root.taskRect(c.clockTarget)})),dragging:root.dragItem ? root.dragItem.modelData : "",
+            return JSON.stringify({appDragging:root.appDragItem!==null,freeLayout:cfg.freeLayout,reserveSpace:cfg.reserveSpace,groupDrag:root.dragGroupId,locale:LocaleState.language,date:LocaleState.locale.toString(new Date(),"dddd, d MMMM yyyy"),groups:root.layoutGroups,panels:root.bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>({id:p.groupId,geometry:root.taskRect(p),items:p.model})),calendars:root.calendarControllers.filter(c => c && c.clockTarget).map(c => ({open:c.calOpen,geometry:root.taskRect(c.clockTarget)})),dragging:root.dragItem ? root.dragItem.modelData : "",
                 modules:root.moduleSlots.filter(s => s && s.hostWindow).map(s => ({id:s.modelData,holding:s.holding,geometry:root.taskRect(s)}))});
         }
         function nativeAppDrag(address:string,token:string):void {
