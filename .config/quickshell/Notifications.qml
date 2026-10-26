@@ -4,10 +4,23 @@ import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Services.Notifications
 import Quickshell.Services.UPower
+import QtQml.Models
 import QtQuick
 
 Scope {
     id: root
+
+    property string barPosition: "left"
+    BarAnchor { id: placement; position: root.barPosition; onInvalidated: root.panelOpen = false }
+    readonly property Item barButton: placement.target
+    readonly property var barWindow: placement.window
+    readonly property int anchorRevision: placement.revision
+    function registerBarButton(item) { placement.registerButton(item); }
+    function unregisterBarButton(item) { placement.unregisterButton(item); }
+    function toggleFromBar(item) {
+        const close = panelOpen && barButton === item;
+        placement.target = item; panelOpen = !close;
+    }
 
     // ---- config / state ---------------------------------------------------
     property int topGap: 50
@@ -87,6 +100,7 @@ Scope {
     }
 
     onPanelOpenChanged: {
+        console.info("43PR notifications: panelOpen=" + panelOpen);
         if (!panelOpen) {
             dragging = false;
             // closing mid-drag never delivers a release event; persist anyway
@@ -371,7 +385,14 @@ Scope {
 
     IpcHandler {
         target: "notifications"
-        function toggle(): void { root.panelOpen = !root.panelOpen; }
+        function diagnostic(): string {
+            const w = notificationLoader.item;
+            return JSON.stringify({open: root.panelOpen, mounted: root.mounted, wanted: root.wanted,
+                tracked: server.trackedNotifications.values.length,
+                timeouts: server.trackedNotifications.values.map(n => n.expireTimeout), history: history.count,
+                window: w ? w.diagnostic() : null});
+        }
+        function toggle(): void { root.panelOpen = !root.panelOpen; console.info("43PR notifications: toggle, open=" + root.panelOpen); }
         function open(): void { root.panelOpen = true; }
         function close(): void { root.panelOpen = false; }
         function clear(): void { root.clearHistory(); }
@@ -489,6 +510,8 @@ Scope {
         imageSupported: true
 
         onNotification: n => {
+            // Existing notifications are already tracked/persisted on reload.
+            if (n.lastGeneration) return;
             n.tracked = !root.dndBlocks(n);
             if (n.tracked) root.playSound(root.soundFor(n));
             if (n.transient) return;
@@ -661,6 +684,7 @@ Scope {
 
     // ---- the window: only exists while mounted --------------------------------
     LazyLoader {
+        id: notificationLoader
         active: root.mounted
 
         PanelWindow {
@@ -669,6 +693,27 @@ Scope {
             // The window can be created with panelOpen already true; bind
             // `reveal` one tick later so the panel still fades in.
             property bool reveal: false
+            screen: root.barWindow ? root.barWindow.screen : null
+            readonly property rect bellRect: {
+                const revision = root.anchorRevision;
+                const button = root.barButton;
+                const bar = root.barWindow;
+                if (!button || !bar) return Qt.rect(0, 0, 0, 0);
+                const point = bar.contentItem.mapFromItem(button, 0, 0);
+                return Qt.rect(point.x + (root.barPosition === "right" ? win.width - bar.width : 0),
+                    point.y + (root.barPosition === "bottom" ? win.height - bar.height : 0),
+                    button.width, button.height);
+            }
+            readonly property bool anchored: root.barButton !== null && root.barWindow !== null
+            readonly property real anchorGap: root.px(8)
+            readonly property real baseX: !anchored ? win.width - panel.width - root.sideGap
+                : root.barPosition === "left" ? bellRect.x + bellRect.width + anchorGap
+                : root.barPosition === "right" ? bellRect.x - panel.width - anchorGap
+                : bellRect.x + (bellRect.width - panel.width) / 2
+            readonly property real baseY: !anchored ? root.topGap
+                : root.barPosition === "top" ? bellRect.y + bellRect.height + anchorGap
+                : root.barPosition === "bottom" ? bellRect.y - panel.height - anchorGap
+                : bellRect.y + (bellRect.height - panel.height) / 2
 
             anchors { top: true; bottom: true; right: true; left: true }
             implicitWidth: root.cardWidth + root.sideGap + 24
@@ -680,12 +725,34 @@ Scope {
 
             mask: Region { item: root.panelOpen ? backdrop : stack }
 
+            function diagnostic() {
+                return {output: screen ? screen.name : "", barPosition: root.barPosition,
+                    anchored: anchored, bell: {x: bellRect.x, y: bellRect.y, width: bellRect.width, height: bellRect.height},
+                    screenWidth: win.width, screenHeight: win.height,
+                    toasts: Array.from({length: toastRepeater.count}, (_, i) => {
+                        const t = toastRepeater.itemAt(i);
+                        if (!t) return null;
+                        return {id: t.modelData.id, requestedTimeout: t.modelData.expireTimeout,
+                            lifetime: t.lifetime, persistent: t.persistent,
+                            x: stack.x + t.x, y: stack.y + t.y, width: t.width, height: t.height,
+                            visible: stack.visible && t.shown && !t.leaving};
+                    }).filter(t => t !== null),
+                    closeButton: {x: panelClose.mapToItem(win.contentItem, 0, 0).x,
+                        y: panelClose.mapToItem(win.contentItem, 0, 0).y,
+                        width: panelClose.width, height: panelClose.height},
+                    reveal: reveal, panelVisible: panel.visible, panelOpacity: panel.opacity,
+                    panelX: panel.x, panelY: panel.y, panelW: panel.width, panelH: panel.height,
+                    maskItem: mask.item === backdrop ? "backdrop" : "stack",
+                    maskItemW: mask.item.width, maskItemH: mask.item.height,
+                    backdropEnabled: backdrop.enabled, panelEnabled: panel.enabled};
+            }
+
             // Bounds that keep the panel on screen. These only shape what is
             // DISPLAYED (effX/effY); the saved offsets are never rewritten by them.
-            readonly property real limMaxX: root.sideGap - root.edgeGap
-            readonly property real limMinX: Math.min(limMaxX, root.cardWidth + root.sideGap + root.edgeGap - win.width)
-            readonly property real limMinY: root.edgeGap + root.px(14) - root.topGap
-            readonly property real limMaxY: Math.max(limMinY, win.height - panel.height - root.edgeGap - root.topGap)
+            readonly property real limMinX: root.edgeGap - baseX
+            readonly property real limMaxX: Math.max(limMinX, win.width - panel.width - root.edgeGap - baseX)
+            readonly property real limMinY: root.edgeGap + root.px(14) - baseY
+            readonly property real limMaxY: Math.max(limMinY, win.height - panel.height - root.edgeGap - root.px(24) - baseY)
             readonly property bool sized: win.width > 0 && win.height > 0
             readonly property real effX: sized ? Math.max(limMinX, Math.min(limMaxX, root.offsetX)) : root.offsetX
             readonly property real effY: sized ? Math.max(limMinY, Math.min(limMaxY, root.offsetY)) : root.offsetY
@@ -725,15 +792,21 @@ Scope {
             Column {
                 id: stack
                 visible: !root.panelOpen
-                anchors {
-                    top: parent.top
-                    topMargin: root.topGap + root.offsetY
-                    right: parent.right
-                    rightMargin: root.sideGap - root.offsetX
-                }
+                width: Math.min(root.cardWidth, Math.max(1, win.width - root.px(16)))
+                readonly property real idealX: !win.anchored ? win.width - width - root.sideGap
+                    : root.barPosition === "left" ? win.bellRect.x + win.bellRect.width + win.anchorGap
+                    : root.barPosition === "right" ? win.bellRect.x - width - win.anchorGap
+                    : win.bellRect.x + (win.bellRect.width - width) / 2
+                readonly property real idealY: !win.anchored ? root.topGap
+                    : root.barPosition === "top" ? win.bellRect.y + win.bellRect.height + win.anchorGap
+                    : root.barPosition === "bottom" ? win.bellRect.y - height - win.anchorGap
+                    : win.bellRect.y + (win.bellRect.height - height) / 2
+                x: Math.max(root.px(8), Math.min(Math.max(root.px(8), win.width - width - root.px(8)), idealX + root.offsetX))
+                y: Math.max(root.px(8), Math.min(Math.max(root.px(8), win.height - height - root.px(8)), idealY + root.offsetY))
                 spacing: root.px(8)
 
                 Repeater {
+                    id: toastRepeater
                     model: server.trackedNotifications
 
                     delegate: Item {
@@ -742,15 +815,24 @@ Scope {
                         property bool shown: false
                         property bool leaving: false
                         property bool wasExpired: false
+                        property bool notificationClosed: false
                         property bool expanded: false
                         property bool copied: false
                         readonly property bool critical: modelData.urgency === NotificationUrgency.Critical
 
-                        width: root.cardWidth
+                        readonly property bool persistent: modelData.expireTimeout === 0
+                        readonly property int lifetime: persistent ? 0 : modelData.expireTimeout > 0
+                            ? Math.max(root.normalTimeout, modelData.expireTimeout)
+                            : (critical ? root.criticalTimeout : root.normalTimeout)
+                        function restartLifetime() {
+                            if (persistent) progAnim.stop();
+                            else if (!leaving && !notificationClosed) progAnim.restart();
+                        }
+                        width: stack.width
                         height: card.height
 
                         function close(expired) {
-                            if (leaving) return;
+                            if (leaving || notificationClosed) return;
                             wasExpired = expired;
                             leaving = true;
                             shown = false;
@@ -763,10 +845,9 @@ Scope {
                             interval: 220
                             onTriggered: {
                                 const n = wrapper.modelData;
+                                if (!n || wrapper.notificationClosed || !n.tracked) return;
                                 try {
                                     if (wrapper.wasExpired) n.expire(); else n.dismiss();
-                                    // belt and braces: make sure it really leaves the tracked list
-                                    if (n) n.tracked = false;
                                 } catch (e) { }
                             }
                         }
@@ -776,8 +857,14 @@ Scope {
                         // a replaced/updated notification gets a fresh lifetime
                         Connections {
                             target: wrapper.modelData
-                            function onSummaryChanged() { progAnim.restart(); }
-                            function onBodyChanged() { progAnim.restart(); }
+                            function onClosed(reason) {
+                                wrapper.notificationClosed = true;
+                                gone.stop();
+                                progAnim.stop();
+                            }
+                            function onSummaryChanged() { wrapper.restartLifetime(); }
+                            function onBodyChanged() { wrapper.restartLifetime(); }
+                            function onExpireTimeoutChanged() { wrapper.restartLifetime(); }
                         }
 
                         Rectangle {
@@ -822,15 +909,14 @@ Scope {
                                 width: card.width - root.px(32)
                                 color: wrapper.critical ? Theme.danger : Theme.alpha(Theme.text, 0.3)
                                 opacity: wrapper.expanded ? 0.15 : 1
+                                visible: !wrapper.persistent
 
                                 NumberAnimation on width {
                                     id: progAnim
                                     from: card.width - root.px(32)
                                     to: 0
-                                    duration: wrapper.modelData.expireTimeout > 0
-                                              ? wrapper.modelData.expireTimeout * 1000
-                                              : (wrapper.critical ? root.criticalTimeout : root.normalTimeout)
-                                    running: !wrapper.leaving
+                                    duration: wrapper.lifetime
+                                    running: !wrapper.leaving && !wrapper.persistent
                                     paused: hh.hovered || wrapper.expanded
                                     onFinished: wrapper.close(true)
                                 }
@@ -992,21 +1078,19 @@ Scope {
                         root.dragging = false;
                         stateTimer.restart();
                     }
+
+                    onDoubleClicked: root.resetPosition()
                 }
             }
 
             Rectangle {
                 id: panel
-                width: root.cardWidth
+                width: Math.min(root.cardWidth, Math.max(0, win.width - root.px(16)))
                 height: panelCol.height + root.px(28)
                 radius: root.px(20)
                 color: Theme.bg
-                anchors {
-                    top: parent.top
-                    topMargin: root.topGap + win.effY
-                    right: parent.right
-                    rightMargin: root.sideGap - win.effX
-                }
+                x: win.baseX + win.effX
+                y: win.baseY + win.effY
                 opacity: win.reveal ? 1 : 0
                 visible: opacity > 0
 
@@ -1067,7 +1151,7 @@ Scope {
                                 visible: history.count > 0
                                 onClicked: root.clearHistory()
                             }
-                            IconBtn { ui: root.ui; icon: "󰅖"; tip: "Close"; onClicked: root.panelOpen = false }
+                            IconBtn { id: panelClose; ui: root.ui; icon: "󰅖"; tip: "Close"; onClicked: root.panelOpen = false }
                         }
                     }
 

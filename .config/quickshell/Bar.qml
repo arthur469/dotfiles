@@ -1,4 +1,5 @@
 import QtQuick
+import "scripts/bar-layout.js" as BarLayout
 import QtQuick.Layouts
 import QtQuick.Effects
 import Quickshell
@@ -10,26 +11,31 @@ import Quickshell.Services.UPower
 
 Scope {
     id: root
+    property var notificationController: null
+    property var powerController: null
+    property var volumeController: null
+    readonly property string notificationPosition: cfg.position
 
     // ───────────────────────── Config ─────────────────────────
     // Single source of truth for defaults (used by the adapter AND reset).
     readonly property var defaults: ({
         // layout
         position: "left", style: "joined", thickness: 20, margin: 4,
-        reserveSpace: true, allScreens: true,
+        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
         // appearance
         scale: 1.0, bgOpacity: 0.5, border: false, radius: 16, calRadius: 15,
         // tooltips
         tooltips: true, tooltipHints: true, tipDelay: 450,
         // modules
         modPad: 20, wsDot: 10, wsGap: 8, wsScroll: true,
-        statsMode: "compact", statsWarn: 85, batLowPct: 15,
+        statsMode: "compact", statsWarn: 85, statsGpu: true, batLowPct: 15,
         volStep: 2, volMax: 100,
         // clock / calendar
         clock24: true, clockSeconds: false, weekMonday: true,
+        tasksCollapsed: false, taskIconSize: 18, taskMaxVisible: 5, moduleGroups: [],
         // module placement
-        hidden: "stats,wall,settings,tasks",
-        startMods: "stats,ws",
+        hidden: "cpu,ram,gpu,wall,settings,tasks",
+        startMods: "cpu,ram,gpu,ws",
         centerMods: "clock",
         endMods: "media,volume,battery,net,notif,wall,settings,power"
     })
@@ -57,6 +63,14 @@ Scope {
             property string style: root.defaults.style
             property int thickness: root.defaults.thickness
             property int margin: root.defaults.margin
+            property bool windowGroupsEnabled: root.defaults.windowGroupsEnabled
+            property var windowGroups: root.defaults.windowGroups
+            property var collapsedGroups: root.defaults.collapsedGroups
+            property bool dropToMinimize: root.defaults.dropToMinimize
+            property bool freeLayout: root.defaults.freeLayout
+            property var groupCells: root.defaults.groupCells
+            property bool autoGroup: root.defaults.autoGroup
+            property bool quickFloatRetile: root.defaults.quickFloatRetile
             property bool reserveSpace: root.defaults.reserveSpace   // push windows away from the bar
             property bool allScreens: root.defaults.allScreens       // false → first screen only
             property real scale: root.defaults.scale
@@ -72,13 +86,18 @@ Scope {
             property int wsGap: root.defaults.wsGap              // gap between workspace dots
             property bool wsScroll: root.defaults.wsScroll       // scroll on workspaces to switch
             property string statsMode: root.defaults.statsMode   // "default" | "compact"
+            property bool statsGpu: root.defaults.statsGpu
             property int statsWarn: root.defaults.statsWarn      // CPU/RAM % that turns red
             property int batLowPct: root.defaults.batLowPct      // battery % that turns red
             property int volStep: root.defaults.volStep          // % per scroll notch
             property int volMax: root.defaults.volMax            // max volume %
             property bool clock24: root.defaults.clock24
             property bool clockSeconds: root.defaults.clockSeconds
-            property bool weekMonday: root.defaults.weekMonday   // calendar week starts on Monday
+            property bool weekMonday: root.defaults.weekMonday
+            property var moduleGroups: []
+            property bool tasksCollapsed: root.defaults.tasksCollapsed
+            property int taskIconSize: root.defaults.taskIconSize
+            property int taskMaxVisible: root.defaults.taskMaxVisible   // calendar week starts on Monday
             property string hidden: root.defaults.hidden         // comma list of disabled modules
             property string startMods: root.defaults.startMods
             property string centerMods: root.defaults.centerMods
@@ -97,7 +116,7 @@ Scope {
     readonly property bool vertical: cfg.position === "left" || cfg.position === "right"
     readonly property bool joined: cfg.style !== "floating"
     readonly property bool strip: cfg.style === "strip"
-    readonly property int panelThick: vertical ? cfg.thickness + 12 : cfg.thickness
+    readonly property int panelThick: Math.max(vertical ? cfg.thickness + 12 : cfg.thickness, isOn("tasks") ? Math.round(cfg.taskIconSize * cfg.scale) + 10 : 0)
     readonly property int effEdge: strip ? 0 : cfg.margin
     readonly property int effGap: strip ? 0 : 6
     readonly property real barRadius: strip ? 0 : cfg.radius
@@ -237,10 +256,13 @@ Scope {
     //   g = glyph, tip = tooltip title, hint = left-click description.
     // Modules without it have a dedicated Component below (see `comps`).
     readonly property var moduleDefs: [
-        { id: "stats",    l: "CPU / RAM" },
+        { id: "cpu",    l: "CPU" },
+        { id: "ram", l: "RAM" },
+        { id: "gpu", l: "GPU" },
         { id: "ws",       l: "Workspaces" },
         { id: "tasks",    l: "Open apps" },
         { id: "media",    l: "Media" },
+        { id: "brightness", l: "Luminosité", g: "󰃠", tip: "Luminosité de cet écran", hint: "Régler la luminosité" },
         { id: "volume",   l: "Volume" },
         { id: "battery",  l: "Battery" },
         { id: "net",      l: "Network",       cmd: "qs ipc call settings network",
@@ -253,15 +275,15 @@ Scope {
                                               tip: "Settings", hint: "Open settings" },
         { id: "power",    l: "Power",         cmd: "qs ipc call powermenu toggle", g: "\u23FB",
                                               tip: "Power menu", hint: "Open", fixed: true }
-    ]
+    ].concat(cfg.windowGroupsEnabled ? cfg.windowGroups.map(g=>({id:"minigroup-"+g.id,l:g.name})) : [])
     readonly property var moduleIds: moduleDefs.map(d => d.id)
     readonly property var defMap: moduleDefs.reduce((m, d) => { m[d.id] = d; return m; }, {})
     readonly property var comps: ({
-        stats: statsC, ws: wsC, tasks: tasksC, media: mediaC, volume: volumeC, battery: batteryC, icon: iconC
+        brightness: brightnessC, cpu: statsC, ram: statsC, gpu: statsC, ws: wsC, tasks: tasksC, media: mediaC, volume: volumeC, battery: batteryC, icon: iconC
     })
 
     function csv(str) { return str === "" ? [] : str.split(","); }
-    function valid(id) { return moduleIds.indexOf(id) >= 0; }
+    function valid(id) { return id === "clock" || moduleIds.indexOf(id) >= 0; }
 
     // enable / disable
     readonly property var hiddenList: csv(cfg.hidden)
@@ -275,7 +297,7 @@ Scope {
     function modVisible(id) {
         if (!isOn(id)) return false;
         switch (id) {
-        case "stats":   return true;   // icon-sized, fits any bar orientation
+        case "cpu": case "ram": case "gpu":   return true;   // icon-sized, fits any bar orientation
         case "media":   return Marquee.player !== null && Marquee.title !== "";
         case "battery": return battery !== null;
         default:        return true;
@@ -283,27 +305,15 @@ Scope {
     }
 
     // sections
-    readonly property var startList: csv(cfg.startMods).filter(valid)
-    readonly property var centerList: {
-        const a = csv(cfg.centerMods).filter(x => x === "clock" || valid(x));
-        return a.indexOf("clock") >= 0 ? a : ["clock"].concat(a);
-    }
-    readonly property var endList: {
-        const a = csv(cfg.endMods).filter(valid);
-        return a.concat(moduleIds.filter(x =>
-            startList.indexOf(x) < 0 && centerList.indexOf(x) < 0 && a.indexOf(x) < 0));
-    }
-
-    function listOf(sec) { return (sec === "start" ? startList : sec === "center" ? centerList : endList).slice(); }
+    readonly property var layoutGroups: BarLayout.groups(cfg, moduleIds)
+    readonly property var startList: layoutGroups.find(g => g.id === "start").items
+    readonly property var centerList: layoutGroups.find(g => g.id === "center").items
+    readonly property var endList: layoutGroups.find(g => g.id === "end").items
+    function listOf(sec) { const g = layoutGroups.find(g => g.id === sec); return g ? g.items.slice() : []; }
     function setList(sec, a) { cfg[sec + "Mods"] = a.join(","); }
-    function sectionOf(id) { return sections.find(k => listOf(k).indexOf(id) >= 0) ?? "end"; }
-
-    function moveTo(id, sec) {
-        const next = {};
-        for (const k of sections) next[k] = listOf(k).filter(x => x !== id);
-        next[sec].push(id);
-        for (const k of sections) setList(k, next[k]);
-    }
+    function sectionOf(id) { const g = layoutGroups.find(g => g.items.includes(id)); return g ? g.id : "end"; }
+    function applyLayout(value) { for (const k in value) cfg[k] = value[k]; save(); }
+    function moveTo(id, sec) { applyLayout(BarLayout.move(cfg,moduleIds,id,sec,0.5)); }
 
     function canShift(id, d) {
         const a = listOf(sectionOf(id)), j = a.indexOf(id) + d;
@@ -314,19 +324,159 @@ Scope {
         if (!canShift(id, d)) return;
         const sec = sectionOf(id), a = listOf(sec), i = a.indexOf(id), j = i + d;
         [a[i], a[j]] = [a[j], a[i]];
-        setList(sec, a);
+        applyLayout(BarLayout.move(cfg,moduleIds,id,sec,0.5,j));
+    }
+
+    property var moduleSlots: []
+    property var bubblePanels: []
+    readonly property string reservedBubbleState: JSON.stringify({active:cfg.freeLayout && cfg.reserveSpace && barVisible && barLive,
+        minimized:taskButtons.filter(t=>t&&t.isMinimized&&t.visible).map(t=>({address:"0x"+t.hyprHandle.address.replace(/^0x/,""),geometry:root.taskRect(t)})),
+        rectangles:bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>root.taskRect(p))})
+    Connections {
+        target:Hyprland
+        function onRawEvent(event) {
+            if(cfg.freeLayout&&cfg.reserveSpace&&['openwindow','changefloatingmode','movewindow','movewindowv2','activewindowv2'].includes(event.name))reserveBubbleTimer.restart();
+        }
+    }
+    onReservedBubbleStateChanged: reserveBubbleTimer.restart()
+    Timer { id:reserveBubbleTimer;interval:180;onTriggered:{if(reserveBubbleWorker.running){restart();return;}reserveBubbleWorker.command=["python3",Qt.resolvedUrl("scripts/bubble-space.py").toString().replace("file://",""),"--state",root.reservedBubbleState];reserveBubbleWorker.running=true;} }
+    Process {id:reserveBubbleWorker;stderr:StdioCollector{onStreamFinished:if(text.trim())console.warn("Bubble reservation: "+text.trim())}}
+
+    property var calendarControllers: []
+    property Item dragItem: null
+    property var dragWindow: null
+    property point dragStart: Qt.point(0,0)
+    property point dragPoint: Qt.point(0,0)
+    property var mergePanel: null
+    property string mergeAnchor: ""
+    property string mergeDirection: "bottom"
+    property var previewCells: ({})
+    property string dragGroupId: ""
+    property point groupOrigin: Qt.point(0,0)
+    property double ignoreClickUntil: 0
+    function beginModuleDrag(slot, point) {
+        if (!slot.hostWindow) return;
+        for (const calendar of calendarControllers) if (calendar) calendar.calOpen = false;
+        processPopup.close();
+        if (notificationController) notificationController.panelOpen = false;
+        if (powerController) powerController.closeMenu();
+        if (volumeController) volumeController.closeAll();
+        dragWindow = slot.hostWindow; dragStart = slot.mapToItem(dragWindow.contentItem,point.x,point.y);
+        dragPoint = dragStart; dragItem = slot; mergePanel = null;
+    }
+    function updateModuleDrag(slot, point) {
+        if (dragItem !== slot || !dragWindow) return;
+        dragPoint = slot.mapToItem(dragWindow.contentItem,point.x,point.y);
+        const along = vertical ? dragPoint.y : dragPoint.x;
+        const half = (vertical ? slot.height : slot.width) / 2;
+        mergePanel = null; mergeAnchor=""; previewCells=({});
+        for (const panel of bubblePanels) {
+            if (!panel || !panel.hostWindow || panel.hostWindow !== dragWindow || !panel.visible) continue;
+            if (panel.model.length === 1 && panel.model[0] === slot.modelData) continue;
+            const p = panel.mapToItem(dragWindow.contentItem,0,0);
+            const start = vertical ? p.y : p.x, size = vertical ? panel.height : panel.width;
+            const near = cfg.freeLayout
+                ? dragPoint.x >= p.x-16 && dragPoint.x <= p.x+panel.width+16 && dragPoint.y >= p.y-16 && dragPoint.y <= p.y+panel.height+16
+                : along+half>=start-12 && along-half<=start+size+12;
+            if(near && cfg.autoGroup) {
+                mergePanel=panel;
+                const candidates=moduleSlots.filter(s=>s&&s.hostWindow===dragWindow&&panel.model.includes(s.modelData)&&s!==slot&&s.visible);
+                let distance=Infinity;
+                for(const other of candidates) {const p=other.mapToItem(dragWindow.contentItem,other.width/2,other.height/2);const d=Math.hypot(dragPoint.x-p.x,dragPoint.y-p.y);if(d<distance){distance=d;mergeAnchor=other.modelData;const dx=dragPoint.x-p.x,dy=dragPoint.y-p.y;mergeDirection=Math.abs(dx)>Math.abs(dy)?(dx<0?"left":"right"):(dy<0?"top":"bottom");}}
+                const next=BarLayout.regroup(cfg,moduleIds,slot.modelData,panel.groupId,0.5,undefined,mergeAnchor,mergeDirection,vertical);
+                previewCells=(next.groupCells||{})[panel.groupId]||{};break;
+            }
+        }
+    }
+    function cancelModuleDrag() { if (dragItem) ignoreClickUntil = Date.now()+250; dragItem=null; dragWindow=null; mergePanel=null; previewCells=({}); dragGroupId=""; }
+    function finishModuleDrag() {
+        if (!dragItem || !dragWindow) { cancelModuleDrag(); return; }
+        const id=dragItem.modelData, item=dragItem, window=dragWindow, target=mergePanel;
+        const along=vertical ? dragPoint.y : dragPoint.x;
+        let groupId, position=0.5, index;
+        if (target) {
+            groupId=target.groupId; const others=target.model.filter(x => x !== id); index=others.length;
+            for (let i=0;i<others.length;i++) {
+                const other=moduleSlots.find(s => s && s.hostWindow===window && s.modelData===others[i]);
+                if (!other) continue;
+                const p=other.mapToItem(window.contentItem,0,0), center=(vertical ? p.y+other.height/2 : p.x+other.width/2);
+                if (along<center) { index=i; break; }
+            }
+        } else {
+            groupId="free-"+Date.now();
+            const extent=vertical ? window.height : window.width, size=vertical ? item.height : item.width;
+            position=Math.max(0,Math.min(1,(along-size/2)/Math.max(1,extent-size)));
+        }
+        const layout=BarLayout.regroup(cfg,moduleIds,id,groupId,position,index,mergeAnchor,mergeDirection,vertical);
+        if(cfg.freeLayout && !target) {
+            const others=bubblePanels.filter(p=>p&&p.hostWindow===window&&p.visible&&p.model.some(x=>x!==id)).map(p=>{const r=p.mapToItem(window.contentItem,0,0);return {x:r.x,y:r.y,width:p.width,height:p.height};});
+            const pos=BarLayout.avoid(dragPoint.x-item.width/2,dragPoint.y-item.height/2,item.width+4,item.height+4,others,window.width,window.height);
+            const group=layout.moduleGroups.find(g=>g.id===groupId);
+            group.x=pos.x/Math.max(1,window.width-item.width-4);group.y=pos.y/Math.max(1,window.height-item.height-4);
+        }
+        cancelModuleDrag(); applyLayout(layout);
+    }
+
+    function beginGroupDrag(panel, point) {
+        if(dragItem || dragGroupId)return;
+        dragWindow=panel.hostWindow;dragGroupId=panel.groupId;
+        dragStart=panel.mapToItem(dragWindow.contentItem,point.x,point.y);dragPoint=dragStart;
+        groupOrigin=panel.mapToItem(dragWindow.contentItem,0,0);
+        processPopup.close();
+    }
+    function updateGroupDrag(panel,point) {
+        if(dragGroupId!==panel.groupId)return;
+        dragPoint=panel.mapToItem(dragWindow.contentItem,point.x,point.y);
+    }
+    function finishGroupDrag(panel) {
+        if(dragGroupId!==panel.groupId)return;
+        const window=dragWindow,id=dragGroupId;
+        const x=Math.max(0,Math.min(window.width-panel.width,groupOrigin.x+dragPoint.x-dragStart.x));
+        const y=Math.max(0,Math.min(window.height-panel.height,groupOrigin.y+dragPoint.y-dragStart.y));
+        const position=vertical?y/Math.max(1,window.height-panel.height):x/Math.max(1,window.width-panel.width);
+        const result=BarLayout.relocate(cfg,moduleIds,id,position,cfg.freeLayout?x/Math.max(1,window.width-panel.width):undefined,cfg.freeLayout?y/Math.max(1,window.height-panel.height):undefined,vertical);
+        cancelModuleDrag();if(result)applyLayout(result);
+    }
+
+    function groupPositions(window, frame) {
+        const placed=[], output={};
+        for(const group of layoutGroups.slice().sort((a,b)=>(a.id===dragGroupId?-1:b.id===dragGroupId?1:0))) {
+            const panel=bubblePanels.find(p=>p&&p.hostWindow===window&&p.groupId===group.id);
+            if(!panel || !panel.visible)continue;
+            const width=panel.width,height=panel.height;
+            let x=group.x!==undefined ? Math.max(0,Math.min(1,group.x))*(frame.width-width) : vertical ? (cfg.position==="right" ? frame.width-width : 0) : group.position*(frame.width-width);
+            let y=group.y!==undefined ? Math.max(0,Math.min(1,group.y))*(frame.height-height) : vertical ? group.position*(frame.height-height) : (cfg.position==="bottom" ? frame.height-height : 0);
+            if(!cfg.freeLayout) {x=vertical?0:group.position*(frame.width-width);y=vertical?group.position*(frame.height-height):0;}
+            if(group.id===dragGroupId && dragWindow===window){x=groupOrigin.x+dragPoint.x-dragStart.x-frame.x;y=groupOrigin.y+dragPoint.y-dragStart.y-frame.y;}
+            const position=BarLayout.avoid(x,y,width,height,placed,frame.width,frame.height);
+            placed.push({x:position.x,y:position.y,width:width,height:height});output[group.id]=position;
+        }
+        return output;
     }
 
     // ───────────────────────── State / IPC ─────────────────────────
     property bool barVisible: true
     property bool barLive: true
 
-    function rebuildBar() { barLive = false; rebuildTimer.restart(); }
+    function rebuildBar() {
+        cancelModuleDrag();
+        processPopup.close();
+        if (notificationController) notificationController.panelOpen = false;
+        // Retain the popup's parent surface until its close animation finishes.
+        // Destroying a layer-shell parent with a fading popup can disconnect Wayland.
+        barRetireTimer.restart();
+    }
+    Timer {
+        id: barRetireTimer
+        interval: Math.max(300, Theme.animMed + 60)
+        onTriggered: { root.barLive = false; rebuildTimer.restart(); }
+    }
     Timer { id: rebuildTimer; interval: 80; onTriggered: root.barLive = true }
     Connections {
         target: cfg
         function onPositionChanged() { root.rebuildBar(); }
         function onStyleChanged() { root.rebuildBar(); }
+        function onFreeLayoutChanged() { root.rebuildBar(); }
     }
 
     // Bar settings now live on the BarPage of the settings app.
@@ -335,6 +485,39 @@ Scope {
 
     IpcHandler {
         target: "bar"
+        function layoutState(): string {
+            return JSON.stringify({freeLayout:cfg.freeLayout,reserveSpace:cfg.reserveSpace,groupDrag:root.dragGroupId,locale:LocaleState.language,date:LocaleState.locale.toString(new Date(),"dddd, d MMMM yyyy"),groups:root.layoutGroups,panels:root.bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>({id:p.groupId,geometry:root.taskRect(p),items:p.model})),calendars:root.calendarControllers.filter(c => c && c.clockTarget).map(c => ({open:c.calOpen,geometry:root.taskRect(c.clockTarget)})),dragging:root.dragItem ? root.dragItem.modelData : "",
+                modules:root.moduleSlots.filter(s => s && s.hostWindow).map(s => ({id:s.modelData,holding:s.holding,geometry:root.taskRect(s)}))});
+        }
+        function nativeAppDrag(address:string,token:string):void {
+            if(Number(token)<=root.appDragClosedToken)return;
+            const item=root.taskButtons.find(t=>t&&t.isMinimized&&t.hyprHandle&&("0x"+t.hyprHandle.address.replace(/^0x/,""))===address);
+            if(item){root.beginAppDrag(item,Qt.point(item.width/2,item.height/2));root.appDragNative=true;}
+        }
+        function endNativeAppDrag(address:string,token:string):void {
+            if(Number(token)<=root.appDragClosedToken)return;
+            root.appDragClosedToken=Math.max(root.appDragClosedToken,Number(token));
+            root.appDragNative=false;
+            if(!root.appDragItem&&!taskRestore.running){
+                const item=root.taskButtons.find(t=>t&&t.isMinimized&&t.hyprHandle&&("0x"+t.hyprHandle.address.replace(/^0x/,""))===address);
+                if(item)root.appDragItem=item;
+            }
+            if(root.appDragItem)root.finishAppDrag();
+        }
+        function resetLayout(): void { cfg.freeLayout=false; cfg.groupCells=({}); cfg.moduleGroups=[]; cfg.startMods=root.defaults.startMods; cfg.centerMods=root.defaults.centerMods; cfg.endMods=root.defaults.endMods; root.save(); }
+        function statsState(): string { return JSON.stringify({gpu:GpuStats.sample,buttons:root.statButtons.map(s => ({kind:s.modelData,geometry:root.taskRect(s)}))}); }
+        function tasksState(): string {
+            const ready = root.nativeToplevels.length;
+            return JSON.stringify({collapsed:cfg.tasksCollapsed, iconSize:cfg.taskIconSize,
+                maxVisible:cfg.taskMaxVisible, controls:root.taskControls.map(t => root.taskRect(t)),
+                strips:root.taskStrips.filter(s => s && s.hostWindow).map(s => ({visible:s.visible,geometry:root.taskRect(s),contentX:s.contentX,contentY:s.contentY,contentWidth:s.contentWidth,contentHeight:s.contentHeight})),
+                buttons:root.taskButtons.map(t => ({title:t.modelData.title,
+                    address:t.hyprHandle ? "0x" + t.hyprHandle.address.replace(/^0x/, "") : "",
+                    minimized:t.isMinimized, geometry:root.taskRect(t)}))});
+        }
+        function setTasksCollapsed(value: bool): void { cfg.tasksCollapsed = value; root.save(); }
+        function setTaskIconSize(value: int): void { cfg.taskIconSize = Math.max(12, Math.min(32, value)); root.save(); }
+        function setTaskMaxVisible(value: int): void { cfg.taskMaxVisible = Math.max(1, Math.min(12, value)); root.save(); }
         function toggle(): void { root.barVisible = !root.barVisible; }
         function show(): void { root.barVisible = true; }
         function hide(): void { root.barVisible = false; }
@@ -499,7 +682,7 @@ Scope {
 
             PopupWindow {
                 readonly property var win: tp.target.QsWindow.window
-                readonly property point p: win.contentItem.mapFromItem(tp.target, 0, 0)
+                readonly property point p: win && tp.target ? win.contentItem.mapFromItem(tp.target, 0, 0) : Qt.point(0, 0)
 
                 anchor.window: win
                 anchor.adjustment: PopupAdjustment.Slide
@@ -548,6 +731,7 @@ Scope {
 
     // Behaviour + visual states shared by every interactive bar element.
     component Interactive: Item {
+        readonly property var hostWindow: QsWindow.window
         id: it
         property string tip: ""
         property string primaryHint: ""
@@ -559,6 +743,7 @@ Scope {
         property bool warning: false           // danger tint (e.g. low battery, muted)
         property bool disabled: false          // dimmed, ignores input, tooltip explains why
         property bool interactive: true        // false → informational only (no hover tint / pointer)
+        property bool restoreDragEligible: false
         property bool noTip: false             // never show a tooltip for this element
         signal primary()
         signal secondary()
@@ -606,13 +791,24 @@ Scope {
 
         MouseArea {
             id: ma
+            pressAndHoldInterval: 450
             anchors.fill: parent
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
             cursorShape: it.interactive && !it.disabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onPressed: { tipper.suppressed = true; tipper.shown = false; }
+            onPressed: mouse => { tipper.suppressed = true; tipper.shown = false;
+                if(mouse.button===Qt.LeftButton && (mouse.modifiers & Qt.MetaModifier) && it.restoreDragEligible){preventStealing=true;root.beginAppDrag(it,Qt.point(mouse.x,mouse.y));}
+            }
+            function slotParent() { let p=it; while(p) { if (p.moduleSlotMarker === true) return p; p=p.parent; } return null; }
+            onPressAndHold: mouse => {
+                if (mouse.button !== Qt.LeftButton || it.disabled || root.appDragItem) return;
+                const slot=slotParent(); if(slot) { preventStealing=true; root.beginModuleDrag(slot,ma.mapToItem(slot,mouse.x,mouse.y)); mouse.accepted=true; }
+            }
+            onPositionChanged: mouse => { if(root.appDragItem===it){root.updateAppDrag(it,Qt.point(mouse.x,mouse.y));return;} const slot=slotParent(); if (slot && root.dragItem === slot) root.updateModuleDrag(slot,ma.mapToItem(slot,mouse.x,mouse.y)); }
+            onReleased: { if(root.appDragItem===it&&!root.appDragNative)root.finishAppDrag(); if (root.dragItem === slotParent()) root.finishModuleDrag(); preventStealing=false; }
+            onCanceled: { if(root.appDragItem===it&&!root.appDragNative)root.appDragItem=null; if (root.dragItem === slotParent()) root.cancelModuleDrag(); preventStealing=false; }
             onClicked: mouse => {
-                if (it.disabled) return;
+                if (it.disabled || root.dragItem || root.appDragItem || Date.now() < root.ignoreClickUntil) return;
                 if (mouse.button === Qt.LeftButton) it.primary();
                 else if (mouse.button === Qt.MiddleButton) it.tertiary();
                 else it.secondaryAction();
@@ -695,35 +891,76 @@ Scope {
     }
 
     component Slot: Loader {
+        id: moduleSlot
+        readonly property var hostWindow: QsWindow.window
+        Component.onCompleted: root.moduleSlots = root.moduleSlots.filter(s => s && s.objectName !== undefined).concat([moduleSlot])
+        Component.onDestruction: { root.moduleSlots = root.moduleSlots.filter(s => s !== moduleSlot); if (root.dragItem === moduleSlot) root.cancelModuleDrag(); }
+        Behavior on x {enabled:root.dragItem!==null;NumberAnimation{duration:100}}
+        Behavior on y {enabled:root.dragItem!==null;NumberAnimation{duration:100}}
+        z: root.dragItem === moduleSlot ? 1000 : 0
+        readonly property bool holding: root.dragItem === moduleSlot
+        readonly property bool moduleSlotMarker: true
+        Rectangle {
+            anchors.fill: parent; anchors.margins: -1; radius: Theme.radius
+            color: "transparent"; border.width: 2; border.color: Theme.accent
+            visible: root.dragItem === moduleSlot
+        }
         required property string modelData
         property Component clockComp: null
         visible: root.modVisible(modelData)
         Layout.alignment: Qt.AlignCenter
-        sourceComponent: modelData === "clock" ? clockComp : (root.comps[modelData] ?? root.comps.icon)
+        sourceComponent: modelData === "clock" ? clockComp : (modelData.startsWith("minigroup-") ? tasksC : (root.comps[modelData] ?? root.comps.icon))
         onLoaded: if (item.mid !== undefined) item.mid = modelData
     }
 
     // One of the three bar sections: a rounded panel holding a Lane of Slots
     component Panel: Rectangle {
         id: panel
+        readonly property var hostWindow: QsWindow.window
+        property string groupId: ""
+        Behavior on x {enabled:root.dragGroupId!==groupId;NumberAnimation{duration:100}}
+        Behavior on y {enabled:root.dragGroupId!==groupId;NumberAnimation{duration:100}}
+        property Region inputRegion: Region { item: panel }
+        readonly property var cellMap: BarLayout.cells(cfg,{id:groupId,items:model},root.vertical)
+        Component.onCompleted: root.bubblePanels = root.bubblePanels.filter(p => p && p.objectName !== undefined).concat([panel])
+        Component.onDestruction: root.bubblePanels = root.bubblePanels.filter(p => p !== panel)
         property var model: []
         property Component clockComp: null
         readonly property Item lane: laneItem
 
         visible: (root.vertical ? laneItem.implicitHeight : laneItem.implicitWidth) > 0
-        width: root.vertical ? root.panelThick : laneItem.implicitWidth + 4
-        height: root.vertical ? laneItem.implicitHeight + 4 : root.panelThick
+        width: Math.max(root.vertical ? root.panelThick : 0,laneItem.implicitWidth+12)
+        height: Math.max(!root.vertical ? root.panelThick : 0,laneItem.implicitHeight+12)
         radius: root.barRadius
-        color: root.joined ? "transparent" : root.bgColor
-        border.width: cfg.border && !root.joined ? 1 : 0
-        border.color: root.borderColor
+        color: root.joined && !cfg.freeLayout ? "transparent" : root.bgColor
+        border.width: root.mergePanel === panel ? 2 : cfg.border && !root.joined ? 1 : 0
+        border.color: root.mergePanel === panel ? Theme.accent : root.borderColor
 
+        MouseArea {
+            id: bubbleDrag
+            anchors.fill:parent;acceptedButtons:Qt.LeftButton;pressAndHoldInterval:300
+            property point pressedAt:Qt.point(0,0)
+            onPressed: mouse=>pressedAt=Qt.point(mouse.x,mouse.y)
+            onPressAndHold: mouse=>root.beginGroupDrag(panel,Qt.point(mouse.x,mouse.y))
+            onPositionChanged: mouse=>{
+                if(!pressed)return;
+                if(!root.dragGroupId && Math.hypot(mouse.x-pressedAt.x,mouse.y-pressedAt.y)>6)root.beginGroupDrag(panel,pressedAt);
+                root.updateGroupDrag(panel,Qt.point(mouse.x,mouse.y));
+            }
+            onReleased:root.finishGroupDrag(panel)
+            onCanceled:root.cancelModuleDrag()
+        }
         Lane {
             id: laneItem
+            flow: GridLayout.LeftToRight
             anchors.centerIn: parent
             Repeater {
                 model: panel.model
-                delegate: Slot { clockComp: panel.clockComp }
+                delegate: Slot {
+                    clockComp: panel.clockComp
+                    readonly property var cell: root.mergePanel===panel && root.dragItem && modelData!==root.dragItem.modelData && root.previewCells[modelData] ? root.previewCells[modelData] : panel.cellMap[modelData]||{x:0,y:0}
+                    Layout.row: cell.y; Layout.column: cell.x
+                }
             }
         }
     }
@@ -793,13 +1030,37 @@ Scope {
             property var def: root.defMap[mid] ?? ({})
             readonly property bool isNet: mid === "net"
             readonly property bool isNotif: mid === "notif"
+            onIsNotifChanged: {
+                if (!root.notificationController) return;
+                if (isNotif) root.notificationController.registerBarButton(ic);
+                else root.notificationController.unregisterBarButton(ic);
+            }
+            onMidChanged: {
+                if(mid === "power" && root.powerController)root.powerController.registerBarButton(ic);
+                if(mid === "brightness" && root.volumeController)root.volumeController.registerBrightnessButton(ic);
+            }
+            Component.onCompleted: {
+                if (isNotif && root.notificationController) root.notificationController.registerBarButton(ic);
+                if (mid === "power" && root.powerController) root.powerController.registerBarButton(ic);
+                if (mid === "brightness" && root.volumeController) root.volumeController.registerBrightnessButton(ic);
+            }
+            Component.onDestruction: {
+                if (root.notificationController) root.notificationController.unregisterBarButton(ic);
+                if (root.powerController) root.powerController.unregisterBarButton(ic);
+                if(root.volumeController)root.volumeController.unregisterBrightnessButton(ic);
+            }
             baseSize: mid === "power" ? root.sz.power : root.sz.icon
             yOffset: root.iconYOffset
             text: isNet ? root.netGlyph : (def.g ?? "")
             tip: isNet ? root.netTip : mid === "notif" ? root.notifTip : (def.tip ?? "")
             primaryHint: def.hint ?? ""
             warning: isNet && root.netState === "disconnected"
-            onPrimary: if (def.cmd) root.run(def.cmd)
+            onPrimary: {
+                if (isNotif && root.notificationController) root.notificationController.toggleFromBar(ic);
+                else if (mid === "power" && root.powerController) root.powerController.toggleFromBar(ic);
+                else if (mid === "brightness" && root.volumeController) root.volumeController.showBrightness(ic);
+                else if (def.cmd) root.run(def.cmd);
+            }
 
             // Notification count badge (top-right of the icon)
             Rectangle {
@@ -833,15 +1094,19 @@ Scope {
     Component {
         id: statsC
         Lane {
+            property string mid: "cpu"
             gap: 2
             Repeater {
-                model: ["CPU", "RAM"]
+                model: [parent.mid.toUpperCase()]
                 delegate: Interactive {
                     id: stat
                     required property string modelData
+                    Component.onCompleted: root.statButtons = root.statButtons.filter(t => t && t.objectName !== undefined).concat([stat])
+                    Component.onDestruction: root.statButtons = root.statButtons.filter(s => s !== stat)
                     readonly property bool isCpu: modelData === "CPU"
+                    readonly property bool isGpu: modelData === "GPU"
                     readonly property bool compact: cfg.statsMode === "compact"
-                    readonly property int val: isCpu ? root.cpuUsage : root.memPercent
+                    readonly property int val: isCpu ? root.cpuUsage : isGpu ? GpuStats.usage : root.memPercent
                     readonly property color fg: warning ? Theme.danger : Theme.text
                     readonly property int fontPx: Math.round(root.sz.taskIcon * 0.5)
 
@@ -850,9 +1115,11 @@ Scope {
                     implicitHeight: root.vertical ? badge.height + 8
                                                   : Math.max(root.panelThick - 2, badge.height + 6)
 
-                    interactive: false
+                    onPrimary: processPopup.toggle(stat, modelData)
+                    primaryHint: "Voir les processus les plus consommateurs"
                     warning: val >= cfg.statsWarn
                     tip: isCpu ? "CPU usage: " + val + "%"
+                               : isGpu ? (GpuStats.available ? "GPU : " + GpuStats.usage + "% · " + GpuStats.temperature : "GPU : mesure indisponible")
                                : "Memory: " + root.memUsedG.toFixed(1) + " / " + root.memTotalG.toFixed(1)
                                  + " GiB (" + val + "%)"
 
@@ -968,44 +1235,182 @@ Scope {
         }
     }
 
-    // Open apps — icons resolved by root.iconFor() so every app gets one
+    ProcessListPopup { id: processPopup; position: cfg.position; uiScale: cfg.scale }
+
+    // Extend the existing Open apps module, keeping its ON/START/CENTER/END controls.
+    readonly property var nativeToplevels: Hyprland.toplevels.values
+    property var taskControls: []
+    property var taskButtons: []
+    property var appDragItem: null
+    property double appDragClosedToken: 0
+    property bool appDragNative: false
+    property point appDragPoint: Qt.point(0,0)
+    function beginAppDrag(item,point) {appDragItem=item;updateAppDrag(item,point);}
+    function updateAppDrag(item,point) {
+        if(appDragItem!==item)return;
+        const p=item.mapToItem(item.hostWindow.contentItem,point.x,point.y),r=root.taskRect(item);
+        const origin=item.mapToItem(item.hostWindow.contentItem,0,0);
+        appDragPoint=Qt.point(p.x+r.x-origin.x,p.y+r.y-origin.y);
+    }
+    function finishAppDrag() {
+        if(!appDragItem)return;
+        const item=appDragItem,address="0x"+item.hyprHandle.address.replace(/^0x/,"");
+        taskRestore.command=["python3",Quickshell.env("HOME")+"/.config/quickshell/minimized-restore.py",address,"--at-cursor"];
+        taskRestore.running=true;appDragItem=null;ignoreClickUntil=Date.now()+250;
+    }
+    Variants {
+        model:root.appDragItem?[root.appDragItem.hostWindow.screen]:[]
+        PanelWindow {
+            required property var modelData
+            screen:modelData;anchors{top:true;bottom:true;left:true;right:true}
+            color:"transparent";exclusionMode:ExclusionMode.Ignore
+            MouseArea {anchors.fill:parent;hoverEnabled:true;onPositionChanged:mouse=>root.appDragPoint=Qt.point(mouse.x,mouse.y)}
+            WlrLayershell.layer:WlrLayer.Overlay
+            Rectangle {
+                x:root.appDragPoint.x-22;y:root.appDragPoint.y-22;width:44;height:44;radius:Theme.radius
+                color:Theme.bg;border.width:1;border.color:Theme.accent;opacity:.9
+                Image {anchors.centerIn:parent;width:28;height:28;source:root.appDragItem?root.iconFor(root.appDragItem.modelData.appId):""}
+            }
+        }
+    }
+    property var taskStrips: []
+    property var statButtons: []
+    function addTaskItem(item, control) {
+        if (control) taskControls = taskControls.filter(t => t && t.objectName !== undefined).concat([item]);
+        else taskButtons = taskButtons.filter(t => t && t.objectName !== undefined).concat([item]);
+    }
+    function removeTaskItem(item) {
+        taskControls = taskControls.filter(t => t !== item);
+        taskButtons = taskButtons.filter(t => t !== item);
+    }
+    function taskRect(item) {
+        const w = item ? item.hostWindow : null;
+        if (!w || !w.screen) return null;
+        // mapFromItem alone does not notify QML when an ancestor moves.
+        let dependency=0,ancestor=item;
+        while(ancestor){dependency+=ancestor.x+ancestor.y+ancestor.width+ancestor.height;ancestor=ancestor.parent;}
+        const p = w.contentItem.mapFromItem(item, 0, 0);
+        return {x:p.x+dependency*0 + (cfg.position === "right" ? w.screen.width - w.width : 0),
+            y:p.y + (cfg.position === "bottom" ? w.screen.height - w.height : 0),
+            width:item.width, height:item.height, output:w.screen.name};
+    }
+    function activateTask(toplevel, hyprHandle, output) {
+        if (hyprHandle && hyprHandle.workspace && hyprHandle.workspace.name.startsWith("special:minimized")) {
+            if (taskRestore.running) return;
+            const address = "0x" + hyprHandle.address.replace(/^0x/, "");
+            taskRestore.command = ["python3", Quickshell.env("HOME") + "/.config/quickshell/minimized-restore.py", address, output];
+            taskRestore.running = true;
+        } else toplevel.activate();
+    }
+    Process {
+        id: taskRestore
+        stderr: StdioCollector { onStreamFinished: if (text.trim()) console.warn("Open apps restore: " + text.trim()) }
+    }
     Component {
         id: tasksC
         Lane {
+            id: taskModule
+            property string mid: "tasks"
+            readonly property bool group: mid.startsWith("minigroup-")
+            readonly property string groupName: group ? ((root.defMap[mid] || {}).l || "Groupe") : "Open apps"
+            readonly property bool collapsed: group ? cfg.collapsedGroups[mid] !== false : cfg.tasksCollapsed
+            readonly property var windows: {
+                const ready=root.nativeToplevels.length;
+                return ToplevelManager.toplevels.values.filter(t=>{
+                const handle=t.HyprlandToplevel.handle, name=handle && handle.workspace ? handle.workspace.name : "";
+                if(group)return name === "special:minimized-"+mid.slice(10);
+                return !cfg.windowGroupsEnabled || !cfg.windowGroups.some(g=>name === "special:minimized-"+g.id);
+            }); }
             gap: 2
-            Repeater {
-                model: ToplevelManager.toplevels
-                delegate: Interactive {
-                    id: task
-                    required property var modelData
-                    Layout.alignment: Qt.AlignCenter
-                    implicitWidth: root.vertical ? root.panelThick : root.sz.taskIcon + 10
-                    implicitHeight: root.vertical ? root.sz.taskIcon + 10
-                                                  : Math.max(root.panelThick - 2, root.sz.taskIcon + 6)
-                    active: modelData.activated
-                    tip: modelData.title !== "" ? modelData.title : modelData.appId
-                    primaryHint: "Focus window"
-                    tertiaryHint: "Close window"
-                    onPrimary: modelData.activate()
-                    onTertiary: modelData.close()
-                    Image {
-                        id: appIcon
-                        anchors.centerIn: parent
-                        width: root.sz.taskIcon
-                        height: root.sz.taskIcon
-                        sourceSize: Qt.size(width, height)
-                        asynchronous: true
-                        smooth: true
-                        visible: false          // rendered through the tint effect below
-                        source: root.iconFor(task.modelData.appId)
+            readonly property int count: taskModule.windows.length
+            readonly property int iconPixels: Math.round(Math.max(12, Math.min(32, cfg.taskIconSize)) * cfg.scale)
+            readonly property int slot: Math.max(root.panelThick, iconPixels + 10)
+            readonly property var window: taskModule.QsWindow.window
+            readonly property real outputLength: window && window.screen ? (root.vertical ? window.screen.height : window.screen.width) : 800
+            readonly property real visibleLength: Math.min(count * (slot + 2), Math.max(slot, Math.min(Math.max(1, cfg.taskMaxVisible) * (slot + 2), outputLength * 0.25)))
+            Mod {
+                id: taskToggle
+                Component.onCompleted: root.addTaskItem(taskToggle, true)
+                Component.onDestruction: root.removeTaskItem(taskToggle)
+                glyph: taskModule.group ? "󰉋" : taskModule.collapsed ? "▸" : "▾"
+                text: String(taskModule.count)
+                glyphSize: root.sz.icon
+                spacing: 3
+                padX: 8
+                tip: taskModule.groupName + " — " + taskModule.count
+                primaryHint: taskModule.collapsed ? "Déplier les applications" : "Replier les applications"
+                onPrimary: {
+                    if(taskModule.group) { const value=Object.assign({},cfg.collapsedGroups);value[taskModule.mid]=!taskModule.collapsed;cfg.collapsedGroups=value; }
+                    else cfg.tasksCollapsed=!cfg.tasksCollapsed;
+                    root.save();
+                }
+            }
+            Flickable {
+                id: appStrip
+                readonly property var hostWindow: QsWindow.window
+                Component.onCompleted: root.taskStrips = root.taskStrips.filter(t => t && t.objectName !== undefined).concat([appStrip])
+                Component.onDestruction: root.taskStrips = root.taskStrips.filter(s => s !== appStrip)
+                visible: !taskModule.collapsed && taskModule.count > 0
+                implicitWidth: root.vertical ? taskModule.slot : taskModule.visibleLength
+                implicitHeight: root.vertical ? taskModule.visibleLength : taskModule.slot
+                contentWidth: root.vertical ? width : appLane.implicitWidth
+                contentHeight: root.vertical ? appLane.implicitHeight : height
+                clip: true
+                interactive: root.dragItem === null && root.appDragItem === null
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: root.vertical ? Flickable.VerticalFlick : Flickable.HorizontalFlick
+                WheelHandler {
+                    target: null
+                    onWheel: event => {
+                        const delta = (event.angleDelta.y || event.angleDelta.x) / 120 * (taskModule.slot + 2);
+                        if (root.vertical) appStrip.contentY = Math.max(0, Math.min(Math.max(0, appStrip.contentHeight - appStrip.height), appStrip.contentY - delta));
+                        else appStrip.contentX = Math.max(0, Math.min(Math.max(0, appStrip.contentWidth - appStrip.width), appStrip.contentX - delta));
+                        event.accepted = true;
                     }
-                    // Flat monochrome icon in Theme.text (accent when the window is focused)
-                    MultiEffect {
-                        anchors.fill: appIcon
-                        source: appIcon
-                        colorization: 1.0
-                        colorizationColor: task.modelData.activated ? Theme.accent : Theme.text
-                        opacity: task.modelData.activated ? 1 : 0.75
+                }
+                Lane {
+                    id: appLane
+                    gap: 2
+                    Repeater {
+                        model: taskModule.windows
+                        delegate: Interactive {
+                            id: task
+                            required property var modelData
+                            readonly property var hyprHandle: modelData.HyprlandToplevel.handle
+                            restoreDragEligible: isMinimized
+                            readonly property bool isMinimized: hyprHandle && hyprHandle.workspace && hyprHandle.workspace.name.startsWith("special:minimized")
+                            Component.onCompleted: root.addTaskItem(task, false)
+                            Component.onDestruction: root.removeTaskItem(task)
+                            implicitWidth: taskModule.slot
+                            implicitHeight: taskModule.slot
+                            active: modelData.activated
+                            tip: (isMinimized ? "Réduite — " : "") + (modelData.title || modelData.appId)
+                            primaryHint: isMinimized ? "Restaurer sur ce bureau" : "Activer la fenêtre"
+                            tertiaryHint: "Fermer la fenêtre"
+                            onPrimary: root.activateTask(modelData, hyprHandle, task.QsWindow.window.screen.name)
+                            onTertiary: modelData.close()
+                            Image {
+                                id: appIcon
+                                anchors.centerIn: parent
+                                width: taskModule.iconPixels; height: taskModule.iconPixels
+                                sourceSize: Qt.size(width, height)
+                                asynchronous: true; smooth: true; visible: false
+                                source: root.iconFor(task.modelData.appId)
+                            }
+                            MultiEffect {
+                                anchors.fill: appIcon
+                                source: appIcon
+                                saturation: task.isMinimized ? -1 : 0
+                                colorization: 0.0
+                                opacity: task.isMinimized ? 0.5 : 1.0
+                            }
+                            Rectangle {
+                                visible: task.isMinimized
+                                anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 2 }
+                                width: Math.max(6, taskModule.iconPixels / 2); height: 2
+                                radius: 1; color: Theme.accent
+                            }
+                        }
                     }
                 }
             }
@@ -1039,8 +1444,36 @@ Scope {
     }
 
     Component {
+        id: brightnessC
+        Mod {
+            id: brightnessButton
+            glyphSize: root.sz.icon
+            glyph: "󰃠"
+            tip: "Luminosité : " + Math.round(BrightnessState.value*100) + "%"
+            primaryHint: "Ouvrir les paramètres de luminosité"
+            scrollHint: "Régler la luminosité"
+            Component.onCompleted: if(root.volumeController)root.volumeController.registerBrightnessButton(brightnessButton)
+            Component.onDestruction: if(root.volumeController)root.volumeController.unregisterBrightnessButton(brightnessButton)
+            onPrimary: root.run("qs ipc call settings brightness")
+            property int queuedBrightness: 0
+            function applyWheel() {
+                if(brightnessWheel.running||queuedBrightness===0)return;
+                const delta=Math.max(-20,Math.min(20,queuedBrightness));queuedBrightness-=delta;
+                brightnessWheel.command=["python3",Quickshell.env("HOME")+"/.config/quickshell/scripts/brightness.py","--output",brightnessButton.hostWindow.screen.name,"--delta",String(delta),"--osd"];
+                brightnessWheel.running=true;
+            }
+            onScrolled: delta => {queuedBrightness+=delta>0?5:-5;brightnessQueue.restart();}
+            Timer {id:brightnessQueue;interval:80;onTriggered:brightnessButton.applyWheel()}
+            Process {id:brightnessWheel;onExited:{brightnessQueue.restart();if(brightnessButton.queuedBrightness===0)BrightnessState.refresh(brightnessButton.hostWindow.screen.name);}}
+        }
+    }
+
+    Component {
         id: volumeC
         Mod {
+            id: volumeButton
+            Component.onCompleted: if (root.volumeController) root.volumeController.registerBarButton(volumeButton)
+            Component.onDestruction: if (root.volumeController) root.volumeController.unregisterBarButton(volumeButton)
             readonly property var sink: Pipewire.defaultAudioSink
             readonly property bool ready: !!(sink && sink.audio)
             readonly property real vol: ready ? sink.audio.volume : 0
@@ -1060,6 +1493,7 @@ Scope {
             onSecondary: root.run("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")
             onScrolled: delta => {
                 if (!ready) return;
+                if (root.volumeController) root.volumeController.chooseBarButton(volumeButton);
                 sink.audio.volume = Math.max(0, Math.min(cfg.volMax / 100,
                     sink.audio.volume + (delta / 120) * (cfg.volStep / 100)));
             }
@@ -1074,6 +1508,7 @@ Scope {
             yOffset: root.iconYOffset
             glyph: root.batIcon
             warning: root.batLow
+            active: root.batCharging
             tip: root.batTip
         }
     }
@@ -1090,15 +1525,18 @@ Scope {
             screen: modelData
 
             anchors {
-                top: cfg.position !== "bottom"
-                bottom: cfg.position !== "top"
-                left: cfg.position !== "right"
-                right: cfg.position !== "left"
+                top: cfg.freeLayout || cfg.position !== "bottom"
+                bottom: cfg.freeLayout || cfg.position !== "top"
+                left: cfg.freeLayout || cfg.position !== "right"
+                right: cfg.freeLayout || cfg.position !== "left"
             }
-            implicitWidth: root.vertical ? root.panelThick + root.effEdge : 0
-            implicitHeight: root.vertical ? 0 : root.panelThick + root.effEdge
-            exclusionMode: cfg.reserveSpace ? ExclusionMode.Auto : ExclusionMode.Ignore
+            implicitWidth: root.vertical ? Math.max(root.panelThick,...root.bubblePanels.filter(p=>p&&p.hostWindow===bar).map(p=>p.width))+root.effEdge : 0
+            implicitHeight: root.vertical ? 0 : Math.max(root.panelThick,...root.bubblePanels.filter(p=>p&&p.hostWindow===bar).map(p=>p.height))+root.effEdge
+            exclusionMode: cfg.reserveSpace && !cfg.freeLayout ? ExclusionMode.Auto : ExclusionMode.Ignore
             color: "transparent"
+            property Region completeRegion: Region { item: frame }
+            property Region dragRegion: Region { item: root.dragWindow === bar ? frame : null }
+            mask: Region { regions: cfg.freeLayout ? root.bubblePanels.filter(p=>p&&p.hostWindow===bar&&p.visible).map(p=>p.inputRegion).concat([bar.dragRegion]) : [bar.completeRegion] }
             visible: root.barVisible
 
             Item {
@@ -1112,7 +1550,7 @@ Scope {
                 }
 
                 Rectangle {
-                    visible: root.joined
+                    visible: root.joined && !cfg.freeLayout
                     anchors.fill: parent
                     radius: root.barRadius
                     color: root.bgColor
@@ -1120,21 +1558,12 @@ Scope {
                     border.color: root.borderColor
                 }
 
-                Panel {
-                    model: root.startList
-                    anchors.left: frame.left
-                    anchors.top: frame.top
-                }
-
-                Panel {
+                Item {
                     id: clockPanel
-                    model: root.centerList
-                    clockComp: clockC
-                    anchors.horizontalCenter: root.vertical ? undefined : frame.horizontalCenter
-                    anchors.verticalCenter: root.vertical ? frame.verticalCenter : undefined
-                    anchors.top: root.vertical ? undefined : frame.top
-                    anchors.left: root.vertical ? frame.left : undefined
-
+                    width: 0; height: 0
+                    property Item clockTarget: null
+                    Component.onCompleted: root.calendarControllers = root.calendarControllers.concat([clockPanel])
+                    Component.onDestruction: root.calendarControllers = root.calendarControllers.filter(c => c !== clockPanel)
                     property bool calOpen: false
                     property int monthOffset: 0
 
@@ -1146,17 +1575,20 @@ Scope {
                     Component {
                         id: clockC
                         Mod {
+                            id: clockButton
+                            Component.onCompleted: clockPanel.clockTarget = clockButton
+                            Component.onDestruction: if (clockPanel.clockTarget === clockButton) { clockPanel.calOpen=false; clockPanel.clockTarget=null; }
                             bold: true
                             baseSize: root.sz.clock
                             text: root.clockText(clk.date)
                             vtext: root.clockVText(clk.date)
                             active: clockPanel.calOpen
-                            tip: Qt.formatDate(clk.date, "dddd, d MMMM yyyy")
+                            tip: LocaleState.locale.toString(clk.date, "dddd, d MMMM yyyy")
                             primaryHint: clockPanel.calOpen ? "Close calendar" : "Open calendar"
                             secondaryHint: "Quick actions"
                             tertiaryHint: "Settings"
                             onPrimary: {
-                                clockPanel.monthOffset = 0;
+                                                        clockPanel.monthOffset = 0;
                                 clockPanel.calOpen = !clockPanel.calOpen;
                             }
                             onSecondary: root.run("qs ipc call qa toggle")
@@ -1164,19 +1596,19 @@ Scope {
                         }
                     }
                     LazyLoader {
-                        active: clockPanel.calOpen
+                        active: clockPanel.calOpen && clockPanel.clockTarget !== null
 
                         PopupWindow {
-                            readonly property point p: bar.contentItem.mapFromItem(clockPanel, 0, 0)
+                            readonly property point p: clockPanel.clockTarget ? bar.contentItem.mapFromItem(clockPanel.clockTarget, 0, 0) : Qt.point(0,0)
 
                             anchor.window: bar
                             anchor.rect.x: root.vertical
-                                ? (cfg.position === "left" ? p.x + clockPanel.width + 6
+                                ? (cfg.position === "left" ? p.x + (clockPanel.clockTarget ? clockPanel.clockTarget.width : 0) + 6
                                                            : p.x - implicitWidth - 6)
-                                : p.x + (clockPanel.width - implicitWidth) / 2
+                                : p.x + ((clockPanel.clockTarget ? clockPanel.clockTarget.width : 0) - implicitWidth) / 2
                             anchor.rect.y: root.vertical
-                                ? p.y + (clockPanel.height - implicitHeight) / 2
-                                : (cfg.position === "top" ? p.y + clockPanel.height + 4
+                                ? p.y + ((clockPanel.clockTarget ? clockPanel.clockTarget.height : 0) - implicitHeight) / 2
+                                : (cfg.position === "top" ? p.y + (clockPanel.clockTarget ? clockPanel.clockTarget.height : 0) + 4
                                                           : p.y - implicitHeight - 4)
                             implicitWidth: calBox.gridW + 2 * calBox.pad
                             implicitHeight: calCol.implicitHeight + 2 * calBox.pad
@@ -1233,7 +1665,7 @@ Scope {
                                             font.bold: true
                                         }
                                         Text {
-                                            text: Qt.formatDate(calBox.now, "dddd, d MMMM yyyy")
+                                            text: LocaleState.locale.toString(calBox.now, "dddd, d MMMM yyyy")
                                             color: Theme.textDim
                                             font.family: Theme.iconFont
                                             font.pixelSize: root.sz.calDate
@@ -1259,7 +1691,7 @@ Scope {
                                             Text {
                                                 id: monthTitle
                                                 anchors.centerIn: parent
-                                                text: Qt.formatDate(calBox.view, "MMMM yyyy")
+                                                text: LocaleState.locale.toString(calBox.view, "MMMM yyyy")
                                                 color: titleMa.containsMouse ? Theme.accent : Theme.text
                                                 font.family: Theme.iconFont
                                                 font.pixelSize: root.sz.calMonth
@@ -1288,7 +1720,7 @@ Scope {
                                                 required property int index
                                                 width: calBox.cellW
                                                 horizontalAlignment: Text.AlignHCenter
-                                                text: Qt.locale().dayName((index + calBox.firstDay) % 7, Locale.ShortFormat)
+                                                text: LocaleState.locale.dayName((index + calBox.firstDay) % 7, Locale.ShortFormat)
                                                 color: Theme.textDim
                                                 font.family: Theme.iconFont
                                                 font.pixelSize: root.sz.calWeekday
@@ -1331,14 +1763,25 @@ Scope {
                     }
                 }
 
-                Panel {
-                    model: root.endList
-                    anchors.right: root.vertical ? undefined : frame.right
-                    anchors.bottom: root.vertical ? frame.bottom : undefined
-                    anchors.top: root.vertical ? undefined : frame.top
-                    anchors.left: root.vertical ? frame.left : undefined
+                ShaderEffectSource {
+                    visible:root.dragItem!==null&&root.dragWindow===bar
+                    sourceItem:root.dragItem;hideSource:true;live:true
+                    width:root.dragItem?root.dragItem.width:0;height:root.dragItem?root.dragItem.height:0
+                    x:root.dragPoint.x-frame.x-width/2;y:root.dragPoint.y-frame.y-height/2;z:10000
+                }
+                Repeater {
+                    model: root.layoutGroups
+                    delegate: Panel {
+                        required property var modelData
+                        groupId: modelData.id
+                        model: modelData.items
+                        clockComp: clockC
+                        x: (root.groupPositions(bar,frame)[groupId] || {x:0}).x
+                        y: (root.groupPositions(bar,frame)[groupId] || {y:0}).y
+                    }
                 }
             }
         }
     }
 }
+// Layout compatibility: Qt ES array reduction.

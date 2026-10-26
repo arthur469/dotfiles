@@ -310,12 +310,14 @@ Scope {
 
     IpcHandler { // ipc call
         target: "settings"
+        function diagnostic():string {return JSON.stringify({open:root.showing,page:root.navItems[root.selectedIndex].page});}
         function toggle(): void { root.toggle() }
         function show(): void { root.show() }
         function hide(): void { root.hide() }
         function toggleSidebar(): void { root.toggleSidebar() }
         function resetSidebarWidth(): void { root.resetSidebarWidth() }
-        function sound(): void { root.selectedIndex = 1, root.show() } 
+        function sound(): void { root.selectedIndex = 1, root.show() }
+        function brightness(): void { root.selectedIndex = 2; root.show(); } 
         function network(): void { root.selectedIndex = 8, root.show() }
         function bar(): void { root.selectedIndex = 6, root.show() }
         function snapTop(): void { root.snapTop() }
@@ -822,13 +824,6 @@ Scope {
                                                 color: Theme.textDim
                                                 visible: parent.text === "" && !parent.activeFocus
                                             }
-                                        }
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            enabled: !root.sidebarCollapsed
-                                            acceptedButtons: Qt.NoButton
-                                            hoverEnabled: true
-                                            cursorShape: Qt.IBeamCursor
                                         }
                                     }
                                 }

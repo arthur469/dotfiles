@@ -221,6 +221,11 @@ else
 fi
 
 # --------------------------------------------------
+# 43PR custom applications
+if [ -f "$REPO_DIR/scripts/ensure-whatsapp.sh" ]; then
+    bash "$REPO_DIR/scripts/ensure-whatsapp.sh" || warning "WhatsApp setup failed."
+fi
+
 # Link dotfiles (symlinked — the repo is the only copy)
 # --------------------------------------------------
 

@@ -7,6 +7,11 @@ import Quickshell.Hyprland
 
 Scope {
     id: root
+    property string barPosition: "left"
+    BarAnchor { id: placement; position: root.barPosition; gap: 8; onInvalidated: root.closeMenu() }
+    function registerBarButton(item) { placement.registerButton(item); }
+    function unregisterBarButton(item) { placement.unregisterButton(item); }
+    function toggleFromBar(item) { placement.target = item; toggleMenu(); }
     // ---- lifecycle -------------------------------------------------------
     property bool showing: false      // logical "menu is open"
     property bool mounted: false      // window exists
@@ -66,7 +71,7 @@ Scope {
         showLabels: true,
         showKeyHints: true,
         showFooter: true,
-        confirmDangerous: false,
+        confirmDangerous: true,
         wrapNav: true,
         hoverSelect: true,
         closeOnOutside: true
@@ -111,6 +116,14 @@ Scope {
     property bool dragging: false
     property int currentIndex: 0
     property string confirmName: ""
+    property bool confirmReady: false
+    Timer { id: confirmDelay; interval: 1200; onTriggered: root.confirmReady = true }
+    Timer { id: confirmExpiry; interval: 10000; onTriggered: root.confirmName = "" }
+    onConfirmNameChanged: {
+        confirmReady = false
+        confirmDelay.stop()
+        confirmExpiry.stop()
+    }
     property var hiddenNames: []
 
     readonly property int edgeGap: 0
@@ -164,7 +177,8 @@ Scope {
     ].concat(actions.map(function (a) {
         return { keys: a.key.toUpperCase(), desc: a.label }
     })).concat([
-        { keys: "Drag handle",            desc: "Move the menu" }
+        { keys: "Drag handle",            desc: "Move the menu" },
+        { keys: "Double-click handle",    desc: "Reset position" }
     ])
 
     function iconFile(name) {
@@ -183,8 +197,14 @@ Scope {
             return
         if (root.confirmDangerous && a.danger && root.confirmName !== a.name) {
             root.confirmName = a.name
+            confirmDelay.restart()
+            confirmExpiry.restart()
+            console.info("43PR power: confirmation requested for " + a.name)
             return
         }
+        // Repeated clicks / held keys must not confirm a destructive action.
+        if (root.confirmDangerous && a.danger && !root.confirmReady) return
+        console.info("43PR power: executing " + a.name + "; confirmation=" + root.confirmDangerous)
         if (a.dispatch)
             Hyprland.dispatch(a.dispatch)
         else if (a.cmd)
@@ -209,6 +229,7 @@ Scope {
             var scr = Quickshell.screens.find(function (s) { return s.name === mon.name })
             if (scr) root.targetScreen = scr
         }
+        if (placement.window) root.targetScreen = placement.window.screen
         currentIndex = 0
         confirmName = ""
         settingsOpen = false
@@ -317,6 +338,10 @@ Scope {
     // ---- always-on services (cheap) --------------------------------------
     IpcHandler {
         target: "powermenu"
+        function diagnostic(): string {
+            return JSON.stringify({open:root.showing, confirmDangerous:root.confirmDangerous,
+                geometry:powerLoader.item ? powerLoader.item.geometry() : null});
+        }
         function toggle(): void { root.toggleMenu() }
         function show(): void { root.openMenu() }
         function hide(): void { root.closeMenu() }
@@ -360,12 +385,15 @@ Scope {
 
     // ---- the menu window: only exists while mounted -----------------------
     LazyLoader {
+        id: powerLoader
         active: root.mounted
 
         PanelWindow {
             id: win
             screen: root.targetScreen
 
+            function geometry() { return {x:panel.x,y:panel.y,width:panel.width*panel.scale,height:panel.height*panel.scale,
+                screenWidth:width,screenHeight:height,output:screen ? screen.name : "",position:root.barPosition}; }
             property bool reveal: false
 
             anchors { top: true; bottom: true; left: true; right: true }
@@ -403,6 +431,7 @@ Scope {
                 focus: true
                 Keys.onPressed: function (event) {
                     if (!root.showing) return
+                    if (event.isAutoRepeat) { event.accepted = true; return }
                     var t = event.text.toLowerCase()
 
                     if (root.settingsOpen) {
@@ -477,20 +506,19 @@ Scope {
                     height: panelCol.height + 2 * root.panelPadding
                     radius: root.panelRadius
                     color: root.panelColor
-                    transformOrigin: Item.TopRight
+                    transformOrigin: Item.TopLeft
                     scale: root.menuSize / 100
-                    anchors.top: parent.top
-                    anchors.topMargin: root.topGap + root.offsetY
-                    anchors.right: parent.right
-                    anchors.rightMargin: root.sideGap - root.offsetX
+                    readonly property point anchoredPoint: placement.place(width * scale, height * scale, win.width, win.height, root.offsetX, root.offsetY)
+                    x: anchoredPoint.x
+                    y: anchoredPoint.y
                     opacity: win.reveal ? 1 : 0
                     visible: opacity > 0
 
-                    Behavior on anchors.rightMargin {
+                    Behavior on x {
                         enabled: !root.dragging && root.showing
                         NumberAnimation { duration: root.animMs * 1.1; easing.type: Easing.OutCubic }
                     }
-                    Behavior on anchors.topMargin {
+                    Behavior on y {
                         enabled: !root.dragging && root.showing
                         NumberAnimation { duration: root.animMs * 1.1; easing.type: Easing.OutCubic }
                     }
@@ -569,6 +597,10 @@ Scope {
                                     root.dragging = false
                                     root.saveState()
                                 }
+                                onDoubleClicked: function (mouse) {
+                                    if (mouse.button === Qt.LeftButton)
+                                        root.resetPosition()
+                                }
                             }
 
                             Tip {
@@ -576,7 +608,7 @@ Scope {
                                 allowed: root.showTooltips
                                 hovered: dragArea.containsMouse && !root.dragging
                                 side: "below"
-                                text: "Drag to move · right-click: settings"
+                                text: "Drag to move · double-click to reset · right-click: settings"
                             }
                         }
 
@@ -636,7 +668,7 @@ Scope {
                                     Text {
                                         id: eLabel
                                         visible: root.showLabels
-                                        text: entry.pending ? entry.modelData.label + "?" : entry.modelData.label
+                                        text: entry.pending ? (root.confirmReady ? "Confirmer : " : "Patientez… ") + entry.modelData.label : entry.modelData.label
                                         font.pixelSize: root.labelSize
                                         font.bold: true
                                         color: entry.pending ? Theme.accent : Theme.text

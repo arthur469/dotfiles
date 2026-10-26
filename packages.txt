@@ -164,3 +164,7 @@ unzip
 # --------------------------------------------------
 
 hyprmod
+
+# WhatsApp Web / Brave
+brave-bin
+python-gobject

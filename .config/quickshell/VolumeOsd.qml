@@ -7,6 +7,35 @@ import QtQuick.Effects
 
 Scope {
     id: root
+    property string barPosition: "left"
+    property bool brightnessMode: false
+    property Item savedVolumeTarget: null
+    property var brightnessButtons: []
+    function registerBrightnessButton(item) { brightnessButtons=brightnessButtons.filter(b=>b&&b.objectName!==undefined).concat([item]); }
+    function unregisterBrightnessButton(item) { brightnessButtons=brightnessButtons.filter(b=>b!==item); }
+
+    readonly property real controlValue: brightnessMode ? BrightnessState.value : volume
+    function showBrightness(item) {
+        if (!brightnessMode) savedVolumeTarget=placement.target;
+        brightnessMode=true; placement.target=item; BrightnessState.refresh(item.QsWindow.window.screen.name);
+        pendingShow=false; showMedia=false; showing=true; hideTimer.restart();
+    }
+    function showVolume() {
+        if(brightnessMode && savedVolumeTarget)placement.target=savedVolumeTarget;
+        brightnessMode=false; pendingShow=false; showMedia=false; showing=true; hideTimer.restart();
+    }
+    function adjustControl(delta) {
+        if(brightnessMode)BrightnessState.set(BrightnessState.value*100 + (delta>0 ? 5 : -5));
+        else nudgeVolume(delta);
+    }
+    readonly property bool verticalVolume: barPosition === "left" || barPosition === "right"
+    BarAnchor { id: placement; position: root.barPosition; onInvalidated: root.closeAll() }
+    function registerBarButton(item) { placement.registerButton(item); }
+    function unregisterBarButton(item) { placement.unregisterButton(item); }
+    function chooseBarButton(item) { placement.target = item; }
+    function barPlace(width, height, outputWidth, outputHeight) {
+        return placement.place(width, height, outputWidth, outputHeight, volOffsetX, volOffsetY);
+    }
 
     // ---- window lifecycle ------------------------------------------------
     property bool mounted: false
@@ -203,6 +232,7 @@ Scope {
     }
 
     function triggerOsd() {
+        if(brightnessMode)showVolume();
         if (!ready) return
         if (showing) { hideTimer.restart(); return }
         pendingShow = true
@@ -247,6 +277,9 @@ Scope {
 
     IpcHandler {
         target: "mediaosd"
+        function volume(): void { root.showVolume(); }
+        function brightness(output: string): void { const button=root.brightnessButtons.find(b=>b&&b.QsWindow.window&&b.QsWindow.window.screen.name===output);if(button)root.showBrightness(button); }
+        function diagnostic(): string { return JSON.stringify({open:root.showing,media:root.showMedia,brightness:root.brightnessMode,brightnessValue:BrightnessState.value,brightnessError:BrightnessState.error,geometry:osdLoader.item ? osdLoader.item.geometry() : null}); }
         function media(): void { root.triggerMediaOsd() }
         function settings(): void { root.openSettings() }
         function hide(): void { root.closeAll() }
@@ -373,13 +406,13 @@ Scope {
 
         command: [
             "sh", "-c",
-            "printf '%s\\n' " +
+            "umask 077; [ -n \"$XDG_RUNTIME_DIR\" ] || exit 1; printf '%s\\n' " +
             "'[general]' 'bars = " + root.barCount + "' 'framerate = " + root.barFps + "' " +
             "'[input]' 'method = pipewire' " +
             "'[output]' 'method = raw' 'raw_target = /dev/stdout' " +
             "'data_format = ascii' 'ascii_max_range = 100' " +
             "'bar_delimiter = 59' 'frame_delimiter = 10' " +
-            "> /tmp/quickshell-cava.conf && exec cava -p /tmp/quickshell-cava.conf"
+            "> \"$XDG_RUNTIME_DIR/43pr-cava.conf\" && exec cava -p \"$XDG_RUNTIME_DIR/43pr-cava.conf\""
         ]
 
         stdout: SplitParser {
@@ -393,10 +426,14 @@ Scope {
 
     // ---- OSD window: only exists while mounted ----------------------------
     LazyLoader {
+        id: osdLoader
         active: root.mounted
 
         PanelWindow {
             id: win
+            screen: placement.window ? placement.window.screen : null
+            function geometry() { const track=volumeTrack.mapToItem(win.contentItem,0,0);return {track:{x:track.x,y:track.y,width:volumeTrack.width*flyout.cardScale,height:volumeTrack.height*flyout.cardScale},x:flyout.x,y:flyout.y,width:flyout.width*flyout.cardScale,height:flyout.height*flyout.cardScale,
+                screenWidth:width,screenHeight:height,output:screen ? screen.name : "",vertical:root.verticalVolume}; }
 
             // Stays false until one tick after creation so cards animate in.
             property bool reveal: false
@@ -435,8 +472,8 @@ Scope {
                     id: hitbox
                     width: win.activeCard.width * root.scaleFactor
                     height: (win.activeCard.height + root.toolsHeight) * root.scaleFactor
-                    x: (scene.width - width) / 2 + root.curX
-                    y: root.topGap + root.curY
+                    x: root.showMedia ? (scene.width - width) / 2 + root.curX : flyout.x
+                    y: root.showMedia ? root.topGap + root.curY : flyout.y
 
                     onWidthChanged: root.hitW = width
                     Component.onCompleted: root.hitW = width
@@ -449,54 +486,60 @@ Scope {
                     xOffset: root.volOffsetX
                     yOffset: root.volOffsetY
                     open: win.reveal && root.showing && !root.showMedia
-                    width: root.flyoutWidth
-                    height: 28
+                    atBar: true
+                    width: root.verticalVolume ? 56 : root.flyoutWidth
+                    height: root.verticalVolume ? Math.min(root.flyoutWidth, win.height / 2) : 36
                     radius: 36
 
                     HoverHandler { id: flyoutHover; enabled: flyout.open }
                     DragArea { anchors.fill: parent; enabled: flyout.open; scene: scene }
                     WheelHandler {
                         enabled: flyout.open && root.scrollVolume
-                        onWheel: event => root.nudgeVolume(event.angleDelta.y)
+                        onWheel: event => root.adjustControl(event.angleDelta.y)
                     }
 
                     Text {
                         id: icon
-                        anchors.left: parent.left
+                        anchors.left: root.verticalVolume ? undefined : parent.left
                         anchors.leftMargin: 20
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: root.muted ? "󰖁" : root.volume <= 0 ? "󰕿" : root.volume < 0.5 ? "󰖀" : "󰕾"
-                        font.family: "Symbols Nerd Font"
-                        font.pixelSize: 20
-                        color: Theme.text
+                        anchors.horizontalCenter: root.verticalVolume ? parent.horizontalCenter : undefined
+                        anchors.top: root.verticalVolume ? parent.top : undefined
+                        anchors.topMargin: 10
+                        anchors.verticalCenter: root.verticalVolume ? undefined : parent.verticalCenter
+                        text: root.brightnessMode ? "󰃠" : root.muted ? "󰖁" : root.volume <= 0 ? "󰕿" : root.volume < 0.5 ? "󰖀" : "󰕾"
+                        font.family: "Symbols Nerd Font"; font.pixelSize: 20; color: Theme.text
                     }
-
                     Text {
-                        anchors.right: parent.right
+                        anchors.right: root.verticalVolume ? undefined : parent.right
                         anchors.rightMargin: 20
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: root.muted ? "Muted" : Math.round(root.volume * 100) + "%"
-                        font.pixelSize: 12
-                        font.bold: true
-                        color: Theme.text
+                        anchors.horizontalCenter: root.verticalVolume ? parent.horizontalCenter : undefined
+                        anchors.bottom: root.verticalVolume ? parent.bottom : undefined
+                        anchors.bottomMargin: 10
+                        anchors.verticalCenter: root.verticalVolume ? undefined : parent.verticalCenter
+                        text: root.brightnessMode ? (BrightnessState.error ? "—" : Math.round(BrightnessState.value*100)+"%") : root.muted ? "󰖁" : Math.round(root.volume * 100) + "%"
+                        font.pixelSize: 12; font.bold: true; color: Theme.text
                     }
-
                     Rectangle {
-                        anchors.left: icon.right
-                        anchors.leftMargin: 15
-                        anchors.right: parent.right
-                        anchors.rightMargin: 68
-                        anchors.verticalCenter: parent.verticalCenter
-                        height: 5
-                        radius: 4
-                        color: "#555555"
-
+                        id: volumeTrack
+                        x: root.verticalVolume ? (parent.width - width) / 2 : icon.x + icon.width + 15
+                        y: root.verticalVolume ? 42 : (parent.height - height) / 2
+                        width: root.verticalVolume ? 6 : Math.max(1, parent.width - x - 68)
+                        height: root.verticalVolume ? Math.max(1, parent.height - 80) : 5
+                        radius: 4; color: Theme.alpha(Theme.text, 0.25)
+                        MouseArea {
+                            anchors.fill: parent; anchors.margins: -12
+                            enabled: root.brightnessMode && BrightnessState.available
+                            function adjust(mouse) { const p=mapToItem(volumeTrack,mouse.x,mouse.y);BrightnessState.set(100*(root.verticalVolume ? 1-p.y/volumeTrack.height : p.x/volumeTrack.width)); }
+                            onPressed: mouse => adjust(mouse)
+                            onPositionChanged: mouse => {if(pressed)adjust(mouse);}
+                        }
                         Rectangle {
-                            width: root.muted ? 0 : parent.width * Math.min(root.volume, 1)
-                            height: parent.height
-                            radius: 4
-                            color: Theme.text
+                            anchors.bottom: parent.bottom
+                            width: root.verticalVolume ? parent.width : parent.width * Math.min(root.controlValue, 1)
+                            height: root.verticalVolume ? parent.height * Math.min(root.controlValue, 1) : parent.height
+                            radius: 4; color: Theme.text; visible: root.brightnessMode || !root.muted
                             Behavior on width { NumberAnimation { duration: 100 } }
+                            Behavior on height { NumberAnimation { duration: 100 } }
                         }
                     }
                 }
@@ -715,10 +758,12 @@ Scope {
                     id: tools
                     width: win.activeCard.width
                     height: root.toolsHeight
-                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.horizontalCenter: root.showMedia ? parent.horizontalCenter : undefined
                     anchors.horizontalCenterOffset: root.curX
-                    anchors.top: parent.top
+                    anchors.top: root.showMedia ? parent.top : undefined
                     anchors.topMargin: root.topGap + root.curY + win.activeCard.height * root.scaleFactor
+                    x: root.showMedia ? 0 : flyout.x
+                    y: root.showMedia ? 0 : flyout.y + flyout.height * root.scaleFactor
                     transformOrigin: Item.Top
                     scale: root.scaleFactor
                     visible: opacity > 0
@@ -986,15 +1031,19 @@ Scope {
         property real xOffset: 0
         property real yOffset: 0
         property real cardScale: 1
+        property bool atBar: false
+        readonly property point anchoredPoint: host.barPlace(width * cardScale, height * cardScale, parent.width, parent.height)
 
         color: host.cardColor
         border.width: host.showBorder ? 1 : 0
         border.color: Theme.alpha(Theme.text, 0.12)
-        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.horizontalCenter: atBar ? undefined : parent.horizontalCenter
         anchors.horizontalCenterOffset: xOffset
-        anchors.top: parent.top
+        anchors.top: atBar ? undefined : parent.top
         anchors.topMargin: host.topGap + yOffset
-        transformOrigin: Item.Top
+        x: atBar ? anchoredPoint.x : 0
+        y: atBar ? anchoredPoint.y : 0
+        transformOrigin: atBar ? Item.TopLeft : Item.Top
         opacity: open ? 1 : 0
         visible: opacity > 0
         scale: (open ? 1 : 0.9) * cardScale

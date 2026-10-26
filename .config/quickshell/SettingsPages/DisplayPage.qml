@@ -582,6 +582,16 @@ Item {
                 font.family: Theme.fontFamily; font.pixelSize: Theme.textSizeTitle; font.letterSpacing: 3
             }
 
+            Rectangle {
+                width:parent.width;height:92;radius:Theme.radius;color:"transparent";border.width:1;border.color:Theme.border
+                Column {
+                    anchors.fill:parent;anchors.margins:12;spacing:8
+                    Text {text:BrightnessState.available?"LUMINOSITÉ  ·  "+Math.round(BrightnessState.value*100)+"%":"LUMINOSITÉ  ·  indisponible";color:Theme.text;font.family:Theme.fontFamily;font.pixelSize:Theme.textSizeGroup}
+                    Slider {width:parent.width;enabled:BrightnessState.available;opacity:enabled?1:0.45;value:BrightnessState.value;onMoved:v=>BrightnessState.set(v*100)}
+                }
+                Component.onCompleted:BrightnessState.refresh()
+            }
+
             Rectangle { width: parent.width; height: 1; color: Theme.border }
 
             Column {

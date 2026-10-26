@@ -1,13 +1,20 @@
 import Quickshell
 
 ShellRoot {
-    VolumeOsd {}
+    WindowOpacity {}
+    VolumeOsd { id: volumeOsd; barPosition: desktopBar.notificationPosition }
     ScreenshotOsd {}
-    SettingsWindow {}
-    Notifications {}
+    SettingsWindow { id: settings }
+    Notifications { id: notifications; barPosition: desktopBar.notificationPosition }
     RecorderOSD {}
-    PowerMenu {}
-    Bar {}
-    Todo {}
-    QuickActions {}
+    PowerMenu { id: power; barPosition: desktopBar.notificationPosition }
+    Bar {
+        id: desktopBar
+        notificationController: notifications
+        powerController: power
+        volumeController: volumeOsd
+
+    }
+    Todo { id: todo }
+    QuickActions { id: actions }
 }

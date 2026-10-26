@@ -1,0 +1,13 @@
+[Unit]
+Description=Carrousel de fenêtres 43PR Quickshell
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/quickshell -p %h/.config/quickshell/window-carousel
+Restart=on-failure
+RestartSec=2
+Environment=QT_QPA_PLATFORM=wayland
+
+[Install]
+WantedBy=graphical-session.target

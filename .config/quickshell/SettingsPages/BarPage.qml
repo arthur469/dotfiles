@@ -1,4 +1,5 @@
 import QtQuick
+import "../scripts/bar-layout.js" as BarLayout
 import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
@@ -22,15 +23,16 @@ Item {
 
     readonly property var defaults: ({
         position: "left", style: "joined", thickness: 20, margin: 4,
-        reserveSpace: true, allScreens: true,
+        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
         scale: 1.0, bgOpacity: 0.5, border: false, radius: 16, calRadius: 15,
         tooltips: true, tooltipHints: true, tipDelay: 450,
         modPad: 20, wsDot: 10, wsGap: 8, wsScroll: true,
-        statsMode: "compact", statsWarn: 85, batLowPct: 15,
+        statsMode: "compact", statsWarn: 85, statsGpu: true, batLowPct: 15,
         volStep: 2, volMax: 100,
         clock24: true, clockSeconds: false, weekMonday: true,
-        hidden: "stats,wall,settings,tasks",
-        startMods: "stats,ws",
+        tasksCollapsed: false, taskIconSize: 18, taskMaxVisible: 5, moduleGroups: [],
+        hidden: "cpu,ram,gpu,wall,settings,tasks",
+        startMods: "cpu,ram,gpu,ws",
         centerMods: "clock",
         endMods: "media,volume,battery,net,notif,wall,settings,power"
     })
@@ -41,10 +43,13 @@ Item {
     readonly property var statsModes: ["default", "compact"]
 
     readonly property var moduleDefs: [
-        { id: "stats",    l: "CPU / RAM" },
+        { id: "cpu", l: "CPU" },
+        { id: "ram", l: "RAM" },
+        { id: "gpu", l: "GPU" },
         { id: "ws",       l: "WORKSPACES" },
         { id: "tasks",    l: "OPEN APPS" },
         { id: "media",    l: "MEDIA" },
+        { id: "brightness", l: "LUMINOSITÉ" },
         { id: "volume",   l: "VOLUME" },
         { id: "battery",  l: "BATTERY" },
         { id: "net",      l: "NETWORK" },
@@ -52,7 +57,7 @@ Item {
         { id: "wall",     l: "WALLPAPERS" },
         { id: "settings", l: "SETTINGS" },
         { id: "power",    l: "POWER", fixed: true }
-    ]
+    ].concat(page.val("windowGroupsEnabled") ? page.val("windowGroups").map(g=>({id:"minigroup-"+g.id,l:g.name})) : [])
     readonly property var moduleIds: moduleDefs.map(d => d.id)
 
     // values changed from their defaults (reassigned on every change so bindings update)
@@ -77,7 +82,7 @@ Item {
         saveTimer.restart()
     }
 
-    readonly property bool modified: Object.keys(defaults).some(k => val(k) !== defaults[k])
+    readonly property bool modified: Object.keys(defaults).some(k => JSON.stringify(val(k)) !== JSON.stringify(defaults[k]))
     readonly property bool vertical: val("position") === "left" || val("position") === "right"
     readonly property bool strip: val("style") === "strip"
 
@@ -92,30 +97,11 @@ Item {
         set("hidden", h.join(","))
     }
 
-    function listOf(sec) {
-        const start = csv(val("startMods")).filter(valid)
-        let center = csv(val("centerMods")).filter(x => x === "clock" || valid(x))
-        if (center.indexOf("clock") < 0) center = ["clock"].concat(center)
-        if (sec === "start") return start
-        if (sec === "center") return center
-        const a = csv(val("endMods")).filter(valid)
-        return a.concat(moduleIds.filter(x =>
-            start.indexOf(x) < 0 && center.indexOf(x) < 0 && a.indexOf(x) < 0))
-    }
-
-    function sectionOf(id) {
-        return sections.find(k => listOf(k).indexOf(id) >= 0) ?? "end"
-    }
-
-    function moveTo(id, sec) {
-        const o = {}
-        for (const k of sections) {
-            const a = listOf(k).filter(x => x !== id)
-            if (k === sec) a.push(id)
-            o[k + "Mods"] = a.join(",")
-        }
-        setMany(o)
-    }
+    function layoutState() { return {startMods:val("startMods"),centerMods:val("centerMods"),endMods:val("endMods"),moduleGroups:val("moduleGroups"),groupCells:val("groupCells")}; }
+    function groups() { return BarLayout.groups(layoutState(),moduleIds); }
+    function listOf(sec) { const g=groups().find(g => g.id===sec); return g ? g.items.slice() : []; }
+    function sectionOf(id) { const g=groups().find(g => g.items.includes(id)); return g ? g.id : "end"; }
+    function moveTo(id,sec) { setMany(BarLayout.move(layoutState(),moduleIds,id,sec,0.5)); }
 
     function canShift(id, d) {
         const a = listOf(sectionOf(id)), j = a.indexOf(id) + d
@@ -126,7 +112,7 @@ Item {
         if (!canShift(id, d)) return
         const sec = sectionOf(id), a = listOf(sec), i = a.indexOf(id), j = i + d
         const t = a[i]; a[i] = a[j]; a[j] = t
-        set(sec + "Mods", a.join(","))
+        setMany(BarLayout.move(layoutState(),moduleIds,id,sec,0.5,j))
     }
 
     // ------------------------------------------------------------------
@@ -623,14 +609,59 @@ Item {
                 topPadding: 4
                 bottomPadding: 4
                 SectionTitle { text: "MODULES" }
+                Text {
+                    text: "Rétablir la disposition d’origine"; color: Theme.textDim; font.pixelSize: 11
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.setMany({freeLayout:false,groupCells:({}),moduleGroups:[],startMods:page.defaults.startMods,centerMods:page.defaults.centerMods,endMods:page.defaults.endMods}) }
+                }
+                ToggleRow { label: "DISPOSITION LIBRE SUR L’ÉCRAN"; checked: page.val("freeLayout");onToggled: v=>page.set("freeLayout",v) }
+                Text { width:parent.width; text:"Appui long : déplacer. Approcher une bulle : regrouper. START/CENTER/END restent utiles pour revenir aux ancrages automatiques.";wrapMode:Text.WordWrap;color:Theme.textDim;font.pixelSize:11 }
+                ToggleRow {label:"REGROUPEMENT AUTOMATIQUE";checked:page.val("autoGroup");onToggled:v=>page.set("autoGroup",v)}
+                ToggleRow {label:"GROUPES DE FENÊTRES RÉDUITES";checked:page.val("windowGroupsEnabled");onToggled:v=>page.set("windowGroupsEnabled",v)}
+                ToggleRow {label:"SUPER + GLISSER VERS OPEN APPS POUR RÉDUIRE";checked:page.val("dropToMinimize");onToggled:v=>page.set("dropToMinimize",v)}
+                Text {width:parent.width;text:"Super + Ctrl + M : choisir ou créer un groupe pour la fenêtre sélectionnée. Super + Espace : flottante. Super + Maj + chiffre : autre bureau.";wrapMode:Text.WordWrap;color:Theme.textDim;font.pixelSize:11}
+                Column {
+                    visible:page.val("windowGroupsEnabled");width:parent.width;spacing:4
+                    Repeater {
+                        model:page.val("windowGroups")
+                        delegate: Text {
+                            required property var modelData
+                            text:"Retirer le groupe « "+modelData.name+" » (fenêtres conservées)";color:Theme.textDim;font.pixelSize:11
+                            MouseArea {anchors.fill:parent;onClicked:Quickshell.execDetached({command:["python3",Qt.resolvedUrl("../scripts/window-groups.py").toString().replace("file://",""),"--remove",parent.modelData.id]})}
+                        }
+                    }
+                }
+                ToggleRow { label: "FLOTTANTES RAPIDES : SUPER + GLISSER RÉTABLIT LA MOSAÏQUE";checked:page.val("quickFloatRetile");onToggled:v=>page.set("quickFloatRetile",v) }
                 Card {
                     Column {
                         width: parent.width; spacing: 4
                         Repeater {
                             model: page.moduleDefs
-                            delegate: ModuleRow {
+                            delegate: Column {
                                 required property var modelData
-                                def: modelData
+                                width: parent.width
+                                spacing: 6
+                                ModuleRow { def: modelData; width: parent.width }
+                                Column {
+                                    width: parent.width
+                                    visible: modelData.id === "tasks" && page.isOn("tasks")
+                                    spacing: 8
+                                    ToggleRow {
+                                        label: "APPLICATIONS REPLIÉES"; checked: page.val("tasksCollapsed")
+                                        onToggled: v => page.set("tasksCollapsed", v)
+                                    }
+                                    BarSlider {
+                                        label: "TAILLE DES ICÔNES"
+                                        from: 12; to: 32; step: 1; unit: " px"
+                                        value: page.val("taskIconSize")
+                                        onMoved: v => page.set("taskIconSize", v)
+                                    }
+                                    BarSlider {
+                                        label: "ICÔNES VISIBLES AVANT DÉFILEMENT"
+                                        from: 1; to: 12; step: 1
+                                        value: page.val("taskMaxVisible")
+                                        onMoved: v => page.set("taskMaxVisible", v)
+                                    }
+                                }
                             }
                         }
                     }
@@ -638,7 +669,7 @@ Item {
                 Text {
                     width: parent.width
                     wrapMode: Text.WordWrap
-                    text: "Changes apply instantly and are saved automatically."
+                    text: "Appui long puis glisser pour déplacer une bulle ; rapprocher deux modules pour les regrouper. Les modifications sont enregistrées automatiquement."
                     color: Theme.textDim
                     font.family: Theme.fontFamily; font.pixelSize: Theme.textSizeSmall
                 }
@@ -706,13 +737,13 @@ Item {
                             onToggled: v => page.set("wsScroll", v)
                         }
                         BarChoice {
-                            label: "CPU / RAM STYLE"
+                            label: "STYLE CPU / RAM / GPU"
                             options: page.statsModes
                             current: page.val("statsMode")
                             onPicked: v => page.set("statsMode", v)
                         }
                         BarSlider {
-                            label: "HIGH CPU / RAM WARNING"
+                            label: "SEUIL CPU / RAM / GPU"
                             from: 50; to: 100; step: 5; unit: "%"
                             value: page.val("statsWarn")
                             onMoved: v => page.set("statsWarn", v)

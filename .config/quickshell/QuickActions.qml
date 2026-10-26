@@ -176,7 +176,8 @@ Scope {
     ].concat(actions.map(function (a) {
         return { keys: a.key.toUpperCase(), desc: a.label }
     })).concat([
-        { keys: "Drag handle",            desc: "Move the menu" }
+        { keys: "Drag handle",            desc: "Move the menu" },
+        { keys: "Double-click handle",    desc: "Reset position" }
     ])
 
     function isOn(name) {
@@ -235,20 +236,8 @@ Scope {
         }
     }
 
-    Process {
-        id: brightCheck
-        command: ["brightnessctl", "-m"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                var parts = text.trim().split(",")
-                if (parts.length >= 4) {
-                    var pct = parseInt(parts[3])
-                    if (!isNaN(pct)) root.brightness = pct / 100
-                }
-            }
-        }
-    }
-
+    QtObject { id: brightCheck; property bool running: false; onRunningChanged: if(running) {BrightnessState.refresh();running=false;} }
+    Connections { target: BrightnessState; function onValueChanged() { root.brightness=BrightnessState.value; } }
     function refreshStates() {
         wifiCheck.running = true
         nightCheck.running = true
@@ -267,9 +256,7 @@ Scope {
     Timer {
         id: brightApplyTimer
         interval: 60
-        onTriggered: Quickshell.execDetached({
-            command: ["brightnessctl", "set", Math.round(root.brightness * 100) + "%"]
-        })
+        onTriggered: BrightnessState.set(root.brightness * 100)
     }
 
     // floor of 1% so you can't scroll the screen fully black
@@ -782,6 +769,10 @@ Scope {
                                     root.dragging = false
                                     root.saveState()
                                 }
+                                onDoubleClicked: function (mouse) {
+                                    if (mouse.button === Qt.LeftButton)
+                                        root.resetPosition()
+                                }
                             }
 
                             QaTip {
@@ -789,7 +780,7 @@ Scope {
                                 allowed: root.showTooltips
                                 hovered: dragArea.containsMouse && !root.dragging
                                 side: "below"
-                                text: "Drag to move · right-click: settings"
+                                text: "Drag to move · double-click to reset · right-click: settings"
                             }
                         }
 

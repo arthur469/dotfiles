@@ -140,7 +140,7 @@ bind(mainMod .. " + " .. terminal_key,      hl.dsp.exec_cmd(terminal))
 bind(mainMod .. " + " .. launcher_key,      hl.dsp.exec_cmd("pgrep -x rofi >/dev/null && pkill -x rofi || " .. menu))
 bind(mainMod .. " + " .. qa_key,         hl.dsp.exec_cmd("qs ipc call qa toggle"))
 bind(mainMod .. " + " .. files_key,         hl.dsp.exec_cmd(fileManager))
-bind(mainMod .. " + " .. browser_key,       hl.dsp.exec_cmd(browser))
+bind(mainMod .. " + " .. browser_key,       hl.dsp.exec_cmd(os.getenv("HOME") .. "/.config/hypr/scripts/default-browser.py"))
 bind(mainMod .. " + " .. close_key,         hl.dsp.window.close())
 bind(mainMod .. " + " .. lock_key,          hl.dsp.exec_cmd("hyprlock"))
 bind(mainMod .. " + " .. power_key,         hl.dsp.exec_cmd("qs ipc call powermenu toggle"))
@@ -149,11 +149,58 @@ bind(mainMod .. " + " .. wallpapers_key,    hl.dsp.exec_cmd("qs -n -p ~/.config/
 bind(mainMod .. " + " .. colorpicker_key,   hl.dsp.exec_cmd("qs -n -p ~/.config/quickshell/colorpicker"))
 bind(mainMod .. " + " .. fullscreen_key,    hl.dsp.window.fullscreen({ mode = 0 }))
 bind(mainMod .. " + " .. opacity_key,       hl.dsp.exec_cmd(home .. "/.config/hypr/scripts/opacity.sh"))
+bind(mainMod .. " + SHIFT + " .. opacity_key, hl.dsp.exec_cmd("python3 " .. home .. "/.config/hypr/scripts/window-opacity.py"))
 bind(mainMod .. " + " .. theme_key,         hl.dsp.exec_cmd("python3 " .. home .. "/.config/43pr/bin/theme.py toggle"))
 bind(mainMod .. " + " .. notifications_key, hl.dsp.exec_cmd("qs ipc call notifications toggle"))
 bind(mainMod .. " + " .. todo_key,          hl.dsp.exec_cmd("qs ipc call todo toggle"))
 
-bind(mainMod .. " + mouse:272", hl.dsp.window.drag(), { mouse = true })
+-- Optional quick floating windows return to tiling when moved with Super.
+local function quick_float_retile(w)
+    if not w or not w.floating then return false end
+    local f=io.open(home .. "/.config/quickshell/state/bar-state.json", "r")
+    if not f then return false end
+    local cfg=f:read("*a");f:close()
+    if not cfg:match('"quickFloatRetile"%s*:%s*true') then return false end
+    local tagged=false
+    if type(w.tags)=="table" then for _,tag in pairs(w.tags) do if tostring(tag):find("43pr-quick-float",1,true) then tagged=true end end
+    else tagged=tostring(w.tags):find("43pr-quick-float",1,true)~=nil end
+    if not tagged then return false end
+    hl.dispatch(hl.dsp.window.float({action="unset"}))
+    hl.dispatch(hl.dsp.window.tag({tag="-43pr-quick-float"}))
+    return true
+end
+local dragged_window_address=nil
+local restoring_app_address=nil
+local restoring_app_token=0
+local app_drag_serial=0
+bind(mainMod .. " + mouse:272", function()
+    local cursor=hl.get_cursor_pos()
+    local runtime=os.getenv("XDG_RUNTIME_DIR")
+    local ok,items=false,{}
+    if runtime then ok,items=pcall(dofile,runtime.."/43pr-bubbles/minimized.lua")end
+    if ok and cursor then for _,r in ipairs(items)do
+        if cursor.x>=r.x and cursor.x<=r.x+r.w and cursor.y>=r.y and cursor.y<=r.y+r.h then
+            dragged_window_address=nil;restoring_app_address=r.address
+            app_drag_serial=app_drag_serial+1;restoring_app_token=os.time()*1000+app_drag_serial
+            hl.exec_cmd("qs ipc call bar nativeAppDrag "..r.address.." "..tostring(restoring_app_token));return
+        end
+    end end
+    local w=hl.get_active_window()
+    dragged_window_address=w and w.address or nil
+    if not quick_float_retile(w) then hl.dispatch(hl.dsp.window.drag()) end
+end, { mouse = true, non_consuming = true })
+bind(mainMod .. " + mouse:272", function()
+    if restoring_app_address then
+        hl.exec_cmd("qs ipc call bar endNativeAppDrag "..restoring_app_address.." "..tostring(restoring_app_token))
+        restoring_app_address=nil;return
+    end
+    if dragged_window_address then
+        hl.dispatch(hl.dsp.exec_cmd("python3 " .. home .. "/.config/quickshell/scripts/window-groups.py --drop " .. dragged_window_address))
+        dragged_window_address=nil
+    end
+end, { release = true, non_consuming = true })
+bind(mainMod .. " + CTRL + M", hl.dsp.exec_cmd("python3 " .. home .. "/.config/quickshell/scripts/window-groups.py --choose"))
+
 bind(mainMod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
 
 bind(mainMod .. " + " .. bar_key, hl.dsp.exec_cmd("qs ipc call bar toggle"))
@@ -168,6 +215,7 @@ bind(mainMod .. " + " .. float_key, function()
     hl.dispatch(hl.dsp.window.float({ action = "toggle" }))
     local w = hl.get_active_window()
     if w ~= nil and w.floating then
+        hl.dispatch(hl.dsp.window.tag({tag="+43pr-quick-float"}))
         local mon = hl.get_active_monitor()
         if mon ~= nil then
             local target_w = math.floor(mon.width * 0.7)
@@ -211,11 +259,12 @@ bind(mainMod .. " + mouse_up", function() zoomfunction(0.5) end, { repeating = t
 bind(mainMod .. " + code:82", function() zoomfunction(-0.3) end, { repeating = true })
 bind(mainMod .. " + code:86", function() zoomfunction(0.3) end, { repeating = true })
 
-bind("XF86MonBrightnessUp", hl.dsp.exec_cmd("brightnessctl set 5%+"), { locked = true, repeating = true })
-bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("brightnessctl set 5%-"), { locked = true, repeating = true })
+bind("XF86MonBrightnessUp", hl.dsp.exec_cmd("python3 " .. home .. "/.config/quickshell/scripts/brightness.py --delta 5 --osd"), { locked = true, repeating = true })
+bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("python3 " .. home .. "/.config/quickshell/scripts/brightness.py --delta -5 --osd"), { locked = true, repeating = true })
 
+-- Physical number row works on AZERTY and QWERTY without changing the layout.
 for i = 1, 10 do
-    local key = i % 10
+    local key = "code:" .. tostring(i + 9)
     bind(mainMod .. " + " .. key, hl.dsp.focus({ workspace = i }))
     bind(mainMod .. " + SHIFT + " .. key, hl.dsp.window.move({ workspace = i }))
 end
@@ -225,7 +274,7 @@ bind(mainMod .. " + SHIFT + E", hl.dsp.exit())
 bind(mainMod .. " + H", hl.dsp.focus({ direction = "left" }))
 bind(mainMod .. " + J", hl.dsp.focus({ direction = "down" }))
 bind(mainMod .. " + K", hl.dsp.focus({ direction = "up" }))
-bind(mainMod .. " + L", hl.dsp.focus({ direction = "right" }))
+bind(mainMod .. " + Right", hl.dsp.focus({ direction = "right" }))
 
 bind(mainMod .. " + SHIFT + H", hl.dsp.window.move({ direction = "left" }))
 bind(mainMod .. " + SHIFT + J", hl.dsp.window.move({ direction = "down" }))
@@ -243,3 +292,13 @@ bind("XF86AudioMute", hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggl
 bind("XF86AudioPlay", hl.dsp.exec_cmd("playerctl play-pause"), { locked = true })
 bind("XF86AudioNext", hl.dsp.exec_cmd("playerctl next"), { locked = true })
 bind("XF86AudioPrev", hl.dsp.exec_cmd("playerctl previous"), { locked = true })
+
+-- Migration Linux : carrousel Quickshell isolé
+dofile(os.getenv("HOME") .. "/.config/quickshell/window-carousel/bindings.lua")
+
+-- PR34_MINIMIZE_BINDINGS
+hl.bind(mainMod .. " + M", hl.dsp.window.move({ workspace = "special:minimized", follow = false }))
+hl.bind(mainMod .. " + SHIFT + M", hl.dsp.workspace.toggle_special("minimized"))
+
+-- PR34_RESTORE_WINDOW
+hl.bind(mainMod .. " + ALT + M", hl.dsp.window.move({ workspace = "+0" }))
