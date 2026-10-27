@@ -28,9 +28,9 @@ Scope {
     function rect(outputWidth, outputHeight) {
         const tick = revision;
         if (!target || !window) return Qt.rect(0, 0, 0, 0);
-        const p = window.contentItem.mapFromItem(target, 0, 0);
+        const p = window.contentItem.mapFromItem(target, 0, 0,target.width,target.height);
         return Qt.rect(p.x + (position === "right" ? outputWidth - window.width : 0),
-            p.y + (position === "bottom" ? outputHeight - window.height : 0), target.width, target.height);
+            p.y + (position === "bottom" ? outputHeight - window.height : 0), p.width, p.height);
     }
     function base(width, height, outputWidth, outputHeight) {
         if (!target || !window) return Qt.point(outputWidth - width - gap, gap);
@@ -48,6 +48,8 @@ Scope {
         delegate: Connections {
             required property var modelData
             target: modelData
+            function onScaleChanged() { root.revision++; }
+            function onRotationChanged() { root.revision++; }
             function onXChanged() { root.revision++; }
             function onYChanged() { root.revision++; }
             function onWidthChanged() { root.revision++; }

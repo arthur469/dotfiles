@@ -162,3 +162,14 @@ function snap(rect,others,width,height,threshold) {
     const clamped=clampRect(Object.assign({},rect,{x:bestX<=threshold?x:rect.x,y:bestY<=threshold?y:rect.y}),width,height);
     return {x:clamped.x,y:clamped.y,guides:guides.filter(g=>(g.axis==='x'?bestX:bestY)<=threshold)};
 }
+
+// Scale a selection proportionally, preserving each component's own size.
+function resizeModules(values,ids,delta) {
+    const output=Object.assign({},values||{}),factor=id=>typeof output[id]==="number"?Math.max(0.5,Math.min(2,output[id])):1;
+    if(!ids.length)return {values:output,average:1};
+    const before=ids.map(factor),average=before.reduce((sum,x)=>sum+x,0)/ids.length;
+    const lower=Math.max(...before.map(x=>0.5/x)),upper=Math.min(...before.map(x=>2/x));
+    const ratio=Math.max(lower,Math.min(upper,(average+delta)/average));
+    ids.forEach((id,i)=>output[id]=Math.round(before[i]*ratio*10000)/10000);
+    return {values:output,average:ids.reduce((sum,id)=>sum+output[id],0)/ids.length};
+}

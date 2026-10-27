@@ -6,6 +6,8 @@ import "../"
 
 Item {
     id: page
+    property var opacityController:null
+    function focusOpacity(){Qt.callLater(()=>flick.contentY=Math.max(0,opacitySection.y));}
 
     property var monitors: []
     property var savedState: ({})
@@ -586,11 +588,13 @@ Item {
                 width:parent.width;height:92;radius:Theme.radius;color:"transparent";border.width:1;border.color:Theme.border
                 Column {
                     anchors.fill:parent;anchors.margins:12;spacing:8
-                    Text {text:BrightnessState.available?"LUMINOSITÉ  ·  "+Math.round(BrightnessState.value*100)+"%":"LUMINOSITÉ  ·  indisponible";color:Theme.text;font.family:Theme.fontFamily;font.pixelSize:Theme.textSizeGroup}
+                    Text {text:LocaleState.tr("LUMINOSITÉ","BRIGHTNESS")+"  ·  "+(BrightnessState.available?Math.round(BrightnessState.value*100)+"%":LocaleState.tr("indisponible","unavailable"));color:Theme.text;font.family:Theme.fontFamily;font.pixelSize:Theme.textSizeGroup}
                     Slider {width:parent.width;enabled:BrightnessState.available;opacity:enabled?1:0.45;value:BrightnessState.value;onMoved:v=>BrightnessState.set(v*100)}
                 }
                 Component.onCompleted:BrightnessState.refresh()
             }
+
+            OpacityPage {id:opacitySection;width:parent.width;height:implicitHeight;opacityController:page.opacityController}
 
             Rectangle { width: parent.width; height: 1; color: Theme.border }
 

@@ -58,7 +58,11 @@ def update(state):
    if binary.exists():
     result=ctl('plugin','load',str(binary));ready='error' not in result.lower()
   if ready and changed:ctl('eval','hl.plugin.bubbles.refresh()')
-  return {'ready':ready,'active':bool(state.get('active')) and ready,'rectangles':len(rows),'margin':margin}
+  plugins=json.loads(ctl('-j','plugin','list')) if ready else []
+  loaded=next((p for p in plugins if p.get('name')=='43pr-bubble-reserve'),{})
+  version=re.match(r'^(\d+)\.(\d+)\.(\d+)',str(loaded.get('version','')))
+  control_bridge=bool(version and tuple(map(int,version.groups()))>=(0,2,0))
+  return {'ready':ready,'controlBridge':control_bridge,'active':bool(state.get('active')) and ready,'rectangles':len(rows),'margin':margin}
 if __name__=='__main__':
  p=argparse.ArgumentParser();p.add_argument('--state',required=True);a=p.parse_args()
  try:print(json.dumps(update(json.loads(a.state))))

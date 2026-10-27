@@ -44,13 +44,13 @@ Item {
         { id: "files",         label: "FILE MANAGER",                def: "E" },
         { id: "browser",       label: "BROWSER",                     def: "B" },
         { id: "settings",      label: "SETTINGS",                    def: "I" },
-        { id: "wheel",         label: "QUICK ACTIONS",               def: "S" },
+        { id: "qa",         label: "QUICK ACTIONS",               def: "S" },
         { id: "close",         label: "CLOSE ACTIVE WINDOW",         def: "Q" },
         { id: "fullscreen",    label: "FULLSCREEN",                  def: "F" },
         { id: "float",         label: "FLOATING WINDOW",             def: "Space" },
-        { id: "lock",          label: "LOCK SCREEN",                 def: "Tab" },
+        { id: "lock",          label: "LOCK SCREEN",                 def: "L" },
         { id: "power",         label: "POWER MENU",                  def: "GRAVE" },
-        { id: "opacity",       label: "OPACITY",                     def: "O" },
+        { id: "opacity",       label: LocaleState.tr("OPACITÉ DU BUREAU","WORKSPACE OPACITY"),                     def: "O" },
         { id: "clipboard",     label: "CLIPBOARD",                   def: "V" },
         { id: "todo",          label: "NOTES & REMINDERS",           def: "C" },
         { id: "colorpicker",   label: "COLOR PICKER",                def: "SHIFT + C" },
@@ -61,13 +61,27 @@ Item {
         { id: "bar",           label: "TOGGLE BAR",                  def: "SHIFT + W" },
         { id: "layout",        label: "KB LAYOUT",                   def: "X" },
         // noSuper: bound as-is in keybinds.lua, SUPER is not prepended
-        { id: "shot",          label: "SCREENSHOT (FULL)",           def: "Delete",         noSuper: true },
-        { id: "shot_area",     label: "SCREENSHOT (AREA)",           def: "SHIFT + Delete", noSuper: true }
+        { id: "shot",          label: "SCREENSHOT (FULL)",           def: "SHIFT + Print",         noSuper: true },
+        { id: "shot_area",     label: "SCREENSHOT (AREA)",           def: "Print", noSuper: true }
     ]
 
     // Fixed binds hardcoded in keybinds.lua (display only, not editable)
     readonly property var fixedBinds: [
-        { id: "fx_focus",     label: "FOCUS WINDOW",              chord: "SUPER + H / J / K / L" },
+        {id:"fx_component_opacity",label:LocaleState.tr("BARRE : OPACITÉ COMPOSANT / GROUPE","BAR: COMPONENT / GROUP OPACITY"),chord:LocaleState.tr("MAINTIEN GAUCHE + MOLETTE","HOLD LEFT + WHEEL")},
+        {id:"fx_component_size",label:LocaleState.tr("BARRE : TAILLE COMPOSANT / GROUPE","BAR: COMPONENT / GROUP SIZE"),chord:LocaleState.tr("MAINTIEN GAUCHE + CTRL + MOLETTE","HOLD LEFT + CTRL + WHEEL")},
+        {id:"fx_component_rotate",label:LocaleState.tr("BARRE : PIVOTER LA SÉLECTION","BAR: ROTATE SELECTION"),chord:LocaleState.tr("MAINTIEN GAUCHE + CLIC DROIT","HOLD LEFT + RIGHT CLICK")},
+        {id:"fx_carousel",label:LocaleState.tr("CARROUSEL DES FENÊTRES","WINDOW CAROUSEL"),chord:"SUPER + Tab"},
+        {id:"fx_carousel_back",label:LocaleState.tr("CARROUSEL PRÉCÉDENT","PREVIOUS CAROUSEL ITEM"),chord:"SUPER + SHIFT + Tab"},
+        {id:"fx_quick_switch",label:LocaleState.tr("BASCULE RAPIDE DES FENÊTRES","QUICK WINDOW SWITCH"),chord:"ALT + Tab"},
+        {id:"fx_opacity_window",label:LocaleState.tr("OPACITÉ DE LA FENÊTRE","WINDOW OPACITY"),chord:"SUPER + SHIFT + "+page.prettyKey("opacity")},
+        {id:"fx_opacity_reset",label:LocaleState.tr("RÉTABLIR TOUTES LES OPACITÉS","RESET ALL WINDOW OPACITIES"),chord:"SUPER + CTRL + "+page.prettyKey("opacity")},
+        {id:"fx_minimize",label:LocaleState.tr("RÉDUIRE LA FENÊTRE","MINIMIZE WINDOW"),chord:"SUPER + M"},
+        {id:"fx_minimized",label:LocaleState.tr("AFFICHER LES FENÊTRES RÉDUITES","SHOW MINIMIZED WINDOWS"),chord:"SUPER + SHIFT + M"},
+        {id:"fx_minimize_group",label:LocaleState.tr("GROUPE DES FENÊTRES RÉDUITES","MINIMIZED WINDOW GROUP"),chord:"SUPER + CTRL + M"},
+        {id:"fx_restore_window",label:LocaleState.tr("RAPATRIER SUR LE BUREAU COURANT","RESTORE TO CURRENT WORKSPACE"),chord:"SUPER + ALT + M"},
+        {id:"fx_drag_window",label:LocaleState.tr("DÉPLACER / RESTAURER DEPUIS OPEN APPS","MOVE / RESTORE FROM OPEN APPS"),chord:"SUPER + mouse:272"},
+        {id:"fx_resize_window",label:LocaleState.tr("REDIMENSIONNER UNE FENÊTRE","RESIZE WINDOW"),chord:"SUPER + mouse:273"},
+        { id: "fx_focus",     label: "FOCUS WINDOW",              chord: "SUPER + H / J / K / Right" },
         { id: "fx_move",      label: "MOVE WINDOW",               chord: "SUPER + SHIFT + H / J / K / L" },
         { id: "fx_ws",        label: "SWITCH WORKSPACE",          chord: "SUPER + 1 - 0" },
         { id: "fx_ws_move",   label: "MOVE WINDOW TO WORKSPACE",  chord: "SUPER + SHIFT + 1 - 0" }
@@ -97,6 +111,8 @@ Item {
             chordOf(d).toLowerCase().indexOf(q) >= 0)
     }
 
+    function shortcutDiagnostic(){return bindDefs.concat(fixedBinds).map(d=>({id:d.id,label:d.label,chord:chordOf(d),fixed:!!d.chord}));}
+    function normalizeChord(chord){return chord.toUpperCase().split("+").map(x=>x.trim()).sort().join("+");}
     function isBrowser(b) { return browsers.some(x => x.bin === b) }
 
     function initBindKeys() {
@@ -218,6 +234,9 @@ Item {
     function setKey(id, raw) {
         const key = cleanKey(raw, isNoSuper(id))
         if (!id || !key) return
+        const proposed=(isNoSuper(id)?key:"SUPER + "+key);
+        const conflict=bindDefs.concat(fixedBinds).find(d=>d.id!==id&&!chordOf(d).includes("/")&&normalizeChord(chordOf(d))===normalizeChord(proposed));
+        if(conflict){captureHint=LocaleState.tr("Déjà utilisé : ","Already assigned: ")+conflict.label;return;}
         const next = Object.assign({}, bindKeys)
         next[id] = key
         bindKeys = next
@@ -237,12 +256,15 @@ Item {
     }
 
     function parseBinds(text) {
-        const next = Object.assign({}, bindKeys)
+        const next = {}
         for (const d of bindDefs) {
+            next[d.id]=d.def;
             const re = new RegExp("^\\s*" + luaName(d.id) + "\\s*=\\s*\"([^\"]+)\"", "m")
             const m = re.exec(text)
             if (m) next[d.id] = m[1]
         }
+        // Accept the historical UI name, while writing the actual Lua name.
+        if(!/^\s*kb_qa\s*=/m.test(text)){const legacy=/^\s*kb_wheel\s*=\s*"([^"]+)"/m.exec(text);if(legacy)next.qa=legacy[1];}
         bindKeys = next
     }
 
@@ -307,6 +329,8 @@ Item {
     FileView {
         id: bindsFile
         path: page.bindsPath
+        watchChanges:true
+        onFileChanged:reload()
         printErrors: false
         onLoaded: page.parseBinds(text())
     }

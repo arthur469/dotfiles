@@ -4,6 +4,7 @@ import Quickshell
 import "../"
 Item {
     id:page
+    implicitHeight:content.implicitHeight
     property real marginLeft:0
     property real marginRight:10
     property real marginTop:0
@@ -15,6 +16,7 @@ Item {
         function onOsdPercentChanged(){workspaceSlider.value=(page.opacityController.osdPercent-40)/60;}
     }
     Flickable {
+        interactive:false
         anchors.fill:parent;clip:true;contentHeight:content.implicitHeight
         Column {
             id:content;width:parent.width;spacing:18

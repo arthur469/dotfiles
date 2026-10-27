@@ -4,6 +4,7 @@
 #include <set>
 #include <linux/input-event-codes.h>
 #include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/EventManager.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
@@ -19,6 +20,7 @@ namespace {
 HANDLE handle;
 CFunctionHook* hook=nullptr;
 CHyprSignalListener buttonListener;
+CHyprSignalListener axisListener;
 bool leftHeld=false;
 using UpdatePosition=void(*)(Layout::CWindowTarget*,uint8_t);
 std::filesystem::path statePath;
@@ -100,10 +102,19 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE pluginHandle) {
     // Qt MouseArea does not reliably report a second button during its drag.
     // Publish a read-only native edge; Quickshell ignores it outside bar drags.
     buttonListener=Event::bus()->m_events.input.mouse.button.listen([](IPointer::SButtonEvent event,Event::SCallbackInfo&) {
-        if(event.button==BTN_LEFT)leftHeld=event.state==WL_POINTER_BUTTON_STATE_PRESSED;
+        if(event.button==BTN_LEFT) {
+            leftHeld=event.state==WL_POINTER_BUTTON_STATE_PRESSED;
+            if(leftHeld&&g_pInputManager)g_pEventManager->postEvent({"43pr_bubble_control",(g_pInputManager->getModsFromAllKBs()&4)?"1":"0"});
+        }
         if(leftHeld&&event.button==BTN_RIGHT&&event.state==WL_POINTER_BUTTON_STATE_PRESSED)
             g_pEventManager->postEvent({"43pr_bubble_rotate",std::to_string(event.timeMs)});
     });
-    return {"43pr-bubble-reserve","Reserve bubble space while keeping the native layout","43PR personal extensions","0.1.0"};
+    axisListener=Event::bus()->m_events.input.mouse.axis.listen([](IPointer::SAxisEvent event,Event::SCallbackInfo&) {
+        // Read-only modifier state: a layer-shell bar has no keyboard focus,
+        // so Qt cannot reliably observe Ctrl held in another application.
+        if(leftHeld&&event.axis==WL_POINTER_AXIS_VERTICAL_SCROLL&&g_pInputManager)
+            g_pEventManager->postEvent({"43pr_bubble_control",(g_pInputManager->getModsFromAllKBs()&4)?"1":"0"});
+    });
+    return {"43pr-bubble-reserve","Reserve bubble space while keeping the native layout","43PR personal extensions","0.2.0"};
 }
-APICALL EXPORT void PLUGIN_EXIT(){buttonListener.reset();leftHeld=false;if(hook)hook->unhook();enabled=false;obstacles.clear();refresh();}
+APICALL EXPORT void PLUGIN_EXIT(){axisListener.reset();buttonListener.reset();leftHeld=false;if(hook)hook->unhook();enabled=false;obstacles.clear();refresh();}

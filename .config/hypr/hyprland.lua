@@ -37,7 +37,7 @@ end)
 
 ---- ENVIRONMENT VARIABLES ----
 
-hl.env("XCURSOR_SIZE", "14")
+hl.env("XCURSOR_SIZE", os.getenv("HYPRCURSOR_SIZE") or "24")
 hl.env("QT_QPA_PLATFORM", "wayland")
 hl.env("MOZ_ENABLE_WAYLAND", "1")
 

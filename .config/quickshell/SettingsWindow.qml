@@ -8,6 +8,8 @@ import "SettingsPages"
 Scope {
     id: root
     property var opacityController: null
+    property bool opacityRequested:false
+    property var activePage:null
 
     // ---- resize limits (tweak these) -------------------------------------
     property real minCardWidth: 700
@@ -85,7 +87,6 @@ Scope {
         { name: "Bluetooth", icon: "󰂯", page: "BluetoothPage" },
         { name: "Storage", icon: "󰋊", page: "StoragePage" },
         { name: "Updates", icon: "󰚰",  page: "UpdatesPage" },
-        { name: LocaleState.tr("Opacité", "Opacity"), icon: "󰗌", page: "OpacityPage" },
     ]
 
     // ---- search -----------------------------------------------------------
@@ -312,15 +313,16 @@ Scope {
 
     IpcHandler { // ipc call
         target: "settings"
-        function diagnostic():string {return JSON.stringify({open:root.showing,page:root.navItems[root.selectedIndex].page,x:root.cardX,y:root.cardY,width:root.cardWidth,height:root.cardHeight});}
+        function diagnostic():string {return JSON.stringify({open:root.showing,page:root.navItems[root.selectedIndex].page,x:root.cardX,y:root.cardY,width:root.cardWidth,height:root.cardHeight,bindings:root.activePage&&root.activePage.shortcutDiagnostic?root.activePage.shortcutDiagnostic():[]});}
         function toggle(): void { root.toggle() }
         function show(): void { root.show() }
         function hide(): void { root.hide() }
         function toggleSidebar(): void { root.toggleSidebar() }
         function resetSidebarWidth(): void { root.resetSidebarWidth() }
         function sound(): void { root.selectedIndex = 1, root.show() }
-        function opacity(): void {root.selectedIndex=root.navItems.findIndex(p=>p.page==="OpacityPage");root.show();}
-        function brightness(): void { root.selectedIndex = 2; root.show(); }
+        function shortcuts():void {root.opacityRequested=false;root.selectedIndex=3;root.show();}
+        function opacity(): void {root.opacityRequested=true;root.selectedIndex=2;root.show();Qt.callLater(()=>{if(root.activePage&&root.activePage.focusOpacity){root.activePage.focusOpacity();root.opacityRequested=false;}});}
+        function brightness(): void { root.opacityRequested=false;root.selectedIndex = 2; root.show(); }
         function network(): void { root.selectedIndex = 8, root.show() }
         function bar(): void { root.selectedIndex = 6, root.show() }
         function snapTop(): void { root.snapTop() }
@@ -993,7 +995,7 @@ Scope {
                                     + ".qml"
 
                                 // quick fade for every freshly loaded page
-                                onLoaded: {if(item&&item.opacityController!==undefined)item.opacityController=root.opacityController;fadeIn.restart();}
+                                onLoaded: {root.activePage=item;if(item&&item.opacityController!==undefined)item.opacityController=root.opacityController;if(root.opacityRequested&&item&&item.focusOpacity){item.focusOpacity();root.opacityRequested=false;}fadeIn.restart();}
 
                                 SequentialAnimation {
                                     id: fadeIn
