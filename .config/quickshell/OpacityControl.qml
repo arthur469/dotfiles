@@ -83,17 +83,17 @@ Scope {
     }
     PanelWindow {
         id:panel;screen:root.targetScreen
-        anchors {left:true;top:true}
-        implicitWidth:Math.min(440*root.uiScale,screen?screen.width-24:440)
-        implicitHeight:230*root.uiScale
-        readonly property point point:root.targetItem?placement.place(width,height,screen.width,screen.height,0,0):Qt.point((screen.width-width)/2,(screen.height-height)/2)
-        margins.left:Math.max(8,point.x);margins.top:Math.max(8,point.y)
+        anchors {left:true;top:true;right:true;bottom:true}
+        readonly property real cardWidth:Math.min(440*root.uiScale,screen?screen.width-24:440)
+        readonly property real cardHeight:230*root.uiScale
+        readonly property point point:root.targetItem?placement.place(cardWidth,cardHeight,screen.width,screen.height,0,0):Qt.point((screen.width-cardWidth)/2,(screen.height-cardHeight)/2)
         visible:root.opened;color:"transparent";exclusionMode:ExclusionMode.Ignore
         WlrLayershell.namespace:"43pr-opacity";WlrLayershell.layer:WlrLayer.Overlay
         WlrLayershell.keyboardFocus:root.opened?WlrKeyboardFocus.Exclusive:WlrKeyboardFocus.None
         HyprlandFocusGrab {windows:[panel];active:panel.visible;onCleared:root.close(true)}
+        MouseArea {anchors.fill:parent;onClicked:root.close(true);onWheel:wheel=>{root.preview(root.percent+wheel.angleDelta.y/120);root.commit();wheel.accepted=true;}}
         Rectangle {
-            anchors.fill:parent;radius:Theme.radius;color:Theme.bg;border.width:1;border.color:Theme.accent
+            id:opacityCard;x:Math.max(8,panel.point.x);y:Math.max(8,panel.point.y);width:panel.cardWidth;height:panel.cardHeight;radius:Theme.radius;color:Theme.bg;border.width:1;border.color:Theme.accent
             Keys.onPressed:event=>{if(event.key===Qt.Key_Escape){root.close(false);event.accepted=true;}else if(event.key===Qt.Key_Return||event.key===Qt.Key_Enter){root.close(true);event.accepted=true;}}
             Column {
                 anchors.fill:parent;anchors.margins:18;spacing:14
@@ -101,7 +101,7 @@ Scope {
                 Text {width:parent.width;text:root.mode==="window"?(root.snapshot.window.title||root.snapshot.window.class||LocaleState.tr("Aucune fenêtre","No window")):LocaleState.tr("Les fenêtres verrouillées conservent leur valeur.","Locked windows keep their value.");color:Theme.textDim;font.pixelSize:11;elide:Text.ElideRight;textFormat:Text.PlainText}
                 Slider {
                     id:slider;width:parent.width;enabled:root.valid
-                    label:"";icon:"󰂵";displayText:root.percent+"%";displayFrom:40;displayTo:100;step:1/60
+                    label:"";icon:"󰗌";resettable:true;resetValue:0;displayText:root.percent+"%";displayFrom:40;displayTo:100;step:1/60
                     value:(root.percent-40)/60
                     onMoved:value=>root.preview(40+Math.round(value*60))
                     onCommitted:root.commit()
@@ -129,6 +129,6 @@ Scope {
         function openControl(kind:string):void {root.show(kind,null);}
         function close():void {root.close(false);}
         function resetAll():void {root.resetAll();}
-        function diagnostic():string {return JSON.stringify({open:root.opened,mode:root.mode,percent:root.percent,valid:root.valid,error:root.error,osdPercent:root.osdPercent,osdWorkspace:root.osdWorkspace,workspace:root.snapshot.workspace,window:root.snapshot.window.address,slider:(()=>{const p=slider.trackItem.mapToItem(panel.contentItem,0,0);return{x:p.x+panel.margins.left,y:p.y+panel.margins.top,width:slider.trackItem.width,height:slider.trackItem.height};})(),geometry:{x:panel.margins.left,y:panel.margins.top,width:panel.width,height:panel.height}});}
+        function diagnostic():string {return JSON.stringify({open:root.opened,mode:root.mode,percent:root.percent,valid:root.valid,error:root.error,osdPercent:root.osdPercent,osdWorkspace:root.osdWorkspace,workspace:root.snapshot.workspace,window:root.snapshot.window.address,slider:(()=>{const p=slider.trackItem.mapToItem(panel.contentItem,0,0);return{x:p.x+panel.margins.left,y:p.y+panel.margins.top,width:slider.trackItem.width,height:slider.trackItem.height};})(),geometry:{x:opacityCard.x,y:opacityCard.y,width:opacityCard.width,height:opacityCard.height}});}
     }
 }

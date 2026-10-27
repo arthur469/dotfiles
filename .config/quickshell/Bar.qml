@@ -22,7 +22,7 @@ Scope {
     readonly property var defaults: ({
         // layout
         position: "left", style: "joined", thickness: 20, margin: 4,
-        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), groupRotations: ({}), autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
+        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), groupRotations: ({}), groupOpacity: ({}), moduleOpacity: ({}), autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
         // appearance
         scale: 1.0, bgOpacity: 0.5, border: false, radius: 16, calRadius: 15,
         // tooltips
@@ -71,6 +71,8 @@ Scope {
             property bool freeLayout: root.defaults.freeLayout
             property var groupCells: root.defaults.groupCells
             property var groupRotations: root.defaults.groupRotations
+            property var groupOpacity: root.defaults.groupOpacity
+            property var moduleOpacity: root.defaults.moduleOpacity
             property bool autoGroup: root.defaults.autoGroup
             property bool quickFloatRetile: root.defaults.quickFloatRetile
             property bool reserveSpace: root.defaults.reserveSpace   // push windows away from the bar
@@ -120,8 +122,8 @@ Scope {
     readonly property bool strip: cfg.style === "strip"
     readonly property int bubblePadding: 3
     readonly property int panelThick: Math.max(vertical ? cfg.thickness + 6 : cfg.thickness, isOn("tasks") ? Math.round(cfg.taskIconSize * cfg.scale) + 6 : 0)
-    readonly property int effEdge: 0
-    readonly property int effGap: 0
+    readonly property int effEdge: Math.round(cfg.margin*cfg.scale)
+    readonly property int effGap: Math.round(cfg.margin*cfg.scale)
     readonly property real barRadius: strip ? 0 : cfg.radius
     readonly property color bgColor: Qt.alpha(Theme.bg, cfg.bgOpacity)
     readonly property color borderColor: Theme.accent
@@ -139,12 +141,7 @@ Scope {
     readonly property int iconYOffset: 1
 
     // margin for one side of the bar frame
-    function edgeMargin(side) {
-        if (cfg.position === side) return effEdge;
-        const alongBar = vertical ? (side === "top" || side === "bottom")
-                                  : (side === "left" || side === "right");
-        return alongBar ? effGap : 0;
-    }
+    function edgeMargin(side) { return effEdge; }
 
     // ───────────────────────── App icon resolution ─────────────────────────
     // Resolves an icon for ANY window (rofi, Steam, Electron apps, XWayland
@@ -265,7 +262,7 @@ Scope {
         { id: "ws",       l: "Workspaces" },
         { id: "tasks",    l: "Open apps" },
         { id: "media",    l: "Media" },
-        {id:"opacity",l:LocaleState.tr("Opacité","Opacity"),g:"󰂵",tip:LocaleState.tr("Opacité des fenêtres","Window opacity"),hint:LocaleState.tr("Régler l’opacité","Adjust opacity")},
+        {id:"opacity",l:LocaleState.tr("Opacité","Opacity"),g:"󰗌",tip:LocaleState.tr("Opacité des fenêtres","Window opacity"),hint:LocaleState.tr("Régler l’opacité","Adjust opacity")},
         { id: "brightness", l: "Luminosité", g: "󰃠", tip: "Luminosité de cet écran", hint: "Régler la luminosité" },
         { id: "volume",   l: "Volume" },
         { id: "battery",  l: "Battery" },
@@ -357,6 +354,38 @@ Scope {
     property var dragModuleTargets: ({})
     property var dragSavedCells: null
     property var dragSavedRotations: null
+    property bool opacityGesture: false
+    property real selectedOpacity: 1
+    property Item opacityTarget: null
+    function groupAlpha(id) { return typeof cfg.groupOpacity[id]==="number"?Math.max(0.05,Math.min(1,cfg.groupOpacity[id])):1; }
+    function moduleAlpha(id) { return typeof cfg.moduleOpacity[id]==="number"?Math.max(0.05,Math.min(1,cfg.moduleOpacity[id])):groupAlpha(sectionOf(id)); }
+    function adjustSelectionOpacity(delta) {
+        if (!dragItem && !dragGroupId) return false;
+        opacityGesture=true;dragMoved=false;mergePanel=null;previewCells=({});
+        const individual=!!dragItem,id=individual?dragItem.modelData:dragGroupId;
+        const value=Math.max(0.05,Math.min(1,Math.round(((individual?moduleAlpha(id):groupAlpha(id))+delta/120*0.05)*100)/100));
+        const modules=Object.assign({},cfg.moduleOpacity),groups=Object.assign({},cfg.groupOpacity);
+        if(individual)modules[id]=value;
+        else {groups[id]=value;for(const module of (layoutGroups.find(g=>g.id===id)||{items:[]}).items)modules[module]=value;}
+        cfg.moduleOpacity=modules;cfg.groupOpacity=groups;selectedOpacity=value;
+        opacityTarget=dragItem||bubblePanels.find(p=>p&&p.groupId===id&&p.hostWindow===dragWindow);
+        selectionOsdTimer.restart();save();return true;
+    }
+    Timer {id:selectionOsdTimer;interval:1400}
+    BarAnchor {id:selectionPlacement;position:cfg.position;target:root.opacityTarget}
+    PanelWindow {
+        id:selectionOsd;visible:selectionOsdTimer.running&&!!root.opacityTarget
+        screen:root.opacityTarget&&root.opacityTarget.QsWindow.window?root.opacityTarget.QsWindow.window.screen:Quickshell.screens[0]
+        anchors {left:true;top:true}
+        implicitWidth:270*cfg.scale;implicitHeight:70*cfg.scale;color:"transparent";exclusionMode:ExclusionMode.Ignore
+        WlrLayershell.layer:WlrLayer.Overlay;WlrLayershell.namespace:"43pr-selection-opacity"
+        readonly property point placement:selectionPlacement.place(width,height,screen.width,screen.height,0,0)
+        margins.left:placement.x;margins.top:placement.y
+        mask:Region{}
+        Rectangle {anchors.fill:parent;radius:Theme.radius;color:Theme.bg;border.width:1;border.color:Theme.accent
+            Slider {anchors.fill:parent;anchors.margins:14;enabled:false;icon:"󰗌";value:root.selectedOpacity;displayText:Math.round(root.selectedOpacity*100)+"%"}
+        }
+    }
     function moduleIsVertical(item) {
         let ancestor=item;
         while(ancestor) { if(ancestor.moduleSlotMarker===true)return ancestor.moduleVertical; ancestor=ancestor.parent; }
@@ -368,7 +397,7 @@ Scope {
         for(const slot of moduleSlots)if(slot&&slot.hostWindow===window){const p=slot.mapToItem(window.contentItem,slot.width/2,slot.height/2);modules[slot.modelData]={x:p.x,y:p.y};}
         dragTargets=panels;dragModuleTargets=modules;
     }
-    function rememberDrag() { dragMoved=false;dragSavedCells=cfg.groupCells;dragSavedRotations=cfg.groupRotations; }
+    function rememberDrag() { opacityGesture=false;dragMoved=false;dragSavedCells=cfg.groupCells;dragSavedRotations=cfg.groupRotations; }
     property double lastRotationAt:0
     function rotateDrag() {
         if(!dragWindow || Date.now()-lastRotationAt<70)return;
@@ -385,7 +414,7 @@ Scope {
             const candidates=moduleSlots.filter(s=>s&&s.hostWindow===dragWindow&&panel.model.includes(s.modelData)&&!sourceIds.includes(s.modelData)&&s.visible);
             if(!candidates.length)continue;
             const live=panel.mapToItem(dragWindow.contentItem,0,0),saved=dragTargets[panel.groupId];
-            const inside=r=>r&&dragPoint.x>=r.x&&dragPoint.x<=r.x+r.width&&dragPoint.y>=r.y&&dragPoint.y<=r.y+r.height;
+            const inside=r=>r&&dragPoint.x>=r.x-12&&dragPoint.x<=r.x+r.width+12&&dragPoint.y>=r.y-12&&dragPoint.y<=r.y+r.height+12;
             const original=inside(saved);
             if(!original&&!inside({x:live.x,y:live.y,width:panel.width,height:panel.height}))continue;
             mergePanel=panel;let distance=Infinity;
@@ -429,7 +458,7 @@ Scope {
         layoutPriority=sectionOf(slot.modelData);layoutAxis=vertical?"y":"x";
     }
     function updateModuleDrag(slot,point) {
-        if(dragItem!==slot || !dragWindow)return;
+        if(dragItem!==slot || !dragWindow || opacityGesture)return;
         dragPoint=slot.mapToItem(dragWindow.contentItem,point.x,point.y);
         if(Math.hypot(dragPoint.x-dragStart.x,dragPoint.y-dragStart.y)>6)dragMoved=true;
         if(dragMoved)findMerge([slot.modelData]);
@@ -440,11 +469,15 @@ Scope {
         dragItem=null;dragGroupId="";dragWindow=null;mergePanel=null;previewCells=({});dragMoved=false;dragSavedCells=null;dragSavedRotations=null;dragTargets=({});dragModuleTargets=({});
     }
     function finishModuleDrag() {
-        if(!dragItem || !dragWindow || !dragMoved){cancelModuleDrag();return;}
+        if(!dragItem || !dragWindow || !dragMoved || opacityGesture){cancelModuleDrag();return;}
         const item=dragItem,id=item.modelData,window=dragWindow,target=mergePanel;
         const solved=groupPositions(window,window.layoutFrame),newId=target?target.groupId:"free-"+Date.now();
         const layout=BarLayout.regroup(cfg,moduleIds,id,newId,0.5,undefined,mergeAnchor,mergeDirection,vertical);
         const result=persistPositions(layout,window,solved,target?{}:{"__module-drag":newId});
+        const opacities=Object.assign({},cfg.moduleOpacity);
+        if(target&&target.groupId!==sectionOf(id))opacities[id]=groupAlpha(target.groupId);
+        else if(!target)opacities[id]=moduleAlpha(id);
+        result.moduleOpacity=opacities;
         layoutPriority=newId;cancelModuleDrag(true);applyLayout(result);
     }
     function beginGroupDrag(panel,point) {
@@ -455,17 +488,19 @@ Scope {
         layoutPriority=panel.groupId;layoutAxis=vertical?"y":"x";processPopup.close();
     }
     function updateGroupDrag(panel,point) {
-        if(dragGroupId!==panel.groupId)return;
+        if(dragGroupId!==panel.groupId || opacityGesture)return;
         dragPoint=panel.mapToItem(dragWindow.contentItem,point.x,point.y);
         if(Math.hypot(dragPoint.x-dragStart.x,dragPoint.y-dragStart.y)>6)dragMoved=true;
         if(dragMoved)findMerge(panel.model);
     }
     function finishGroupDrag(panel) {
         if(dragGroupId!==panel.groupId)return;
-        if(!dragMoved){cancelModuleDrag();return;}
+        if(!dragMoved||opacityGesture){cancelModuleDrag();return;}
         const window=dragWindow,id=dragGroupId,solved=groupPositions(window,window.layoutFrame);let result,rename={};
         if(mergePanel)result=BarLayout.mergeGroups(cfg,moduleIds,id,mergePanel.groupId,mergeAnchor,mergeDirection,vertical);
         else {result=BarLayout.relocate(cfg,moduleIds,id,0.5,undefined,undefined,vertical);const moved=result.moduleGroups[result.moduleGroups.length-1];rename[id]=moved.id;}
+        if(mergePanel){const values=Object.assign({},cfg.moduleOpacity);for(const module of (layoutGroups.find(g=>g.id===id)||{items:[]}).items)values[module]=groupAlpha(mergePanel.groupId);result.moduleOpacity=values;}
+        else if(rename[id]&&rename[id]!==id){const values=Object.assign({},cfg.groupOpacity);values[rename[id]]=groupAlpha(id);result.groupOpacity=values;}
         result=persistPositions(result,window,solved,rename);cancelModuleDrag(true);if(result)applyLayout(result);
     }
     function layoutSolution(window,frame) {
@@ -479,14 +514,14 @@ Scope {
             let y=group.y!==undefined?group.y*Math.max(0,frame.height-height):vertical?group.position*(frame.height-height):(cfg.position==="bottom"?frame.height-height:0);
             if(!cfg.freeLayout){x=vertical?0:group.position*(frame.width-width);y=vertical?group.position*(frame.height-height):0;}
             if(group.id===dragGroupId && dragWindow===window && dragMoved){x=dragPoint.x-dragGrip.x-frame.x;y=dragPoint.y-dragGrip.y-frame.y;}
-            rectangles.push({id:group.id,x:x,y:y,width:width,height:height});
+            rectangles.push({id:group.id,x:x,y:y,width:width,height:height,order:vertical?(group.y===undefined?group.position:group.y):(group.x===undefined?group.position:group.x)});
         }
         if(dragItem && dragWindow===window && dragMoved && !mergePanel)rectangles.push({id:"__module-drag",x:dragPoint.x-dragGrip.x-frame.x-root.bubblePadding,y:dragPoint.y-dragGrip.y-frame.y-root.bubblePadding,width:dragItem.width+2*root.bubblePadding,height:dragItem.height+2*root.bubblePadding});
         const moving=rectangles.find(r=>r.id===(dragGroupId||"__module-drag"));
         if(moving && cfg.freeLayout && dragMoved && !mergePanel){const snap=BarLayout.snap(moving,rectangles.filter(r=>r!==moving),frame.width,frame.height,10);moving.x=snap.x;moving.y=snap.y;guides=snap.guides;}
         let axis=layoutAxis;
         if(moving && cfg.freeLayout && vertical && moving.x<root.panelThick+10)axis="x";
-        const solution=BarLayout.solve(rectangles,frame.width,frame.height,mergePanel?mergePanel.groupId:moving?moving.id:layoutPriority,axis,2,mergePanel&&dragGroupId?[dragGroupId]:[]);
+        const solution=BarLayout.solve(rectangles,frame.width,frame.height,mergePanel?mergePanel.groupId:moving?moving.id:layoutPriority,axis,2,mergePanel&&dragGroupId?[dragGroupId]:[],(!dragItem&&!dragGroupId)?(vertical?"y":"x"):null);
         solution.guides=guides;return solution;
     }
     function groupPositions(window,frame) {return layoutSolution(window,frame).positions;}
@@ -522,9 +557,10 @@ Scope {
 
     IpcHandler {
         target: "bar"
+        function resetOpacities():void {cfg.groupOpacity=({});cfg.moduleOpacity=({});root.save();}
         function layoutState(): string {
-            return JSON.stringify({appDragging:root.appDragItem!==null,freeLayout:cfg.freeLayout,reserveSpace:cfg.reserveSpace,nativeReservation:root.nativeReservation,groupDrag:root.dragGroupId,mergeTarget:root.mergePanel?root.mergePanel.groupId:"",locale:LocaleState.language,date:LocaleState.locale.toString(new Date(),"dddd, d MMMM yyyy"),groups:root.layoutGroups,panels:root.bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>({id:p.groupId,selected:root.dragGroupId===p.groupId,border:p.border.width,geometry:root.taskRect(p),items:p.model})),calendars:root.calendarControllers.filter(c => c && c.clockTarget).map(c => ({open:c.calOpen,geometry:root.taskRect(c.clockTarget)})),dragging:root.dragItem ? root.dragItem.modelData : "",
-                modules:root.moduleSlots.filter(s => s && s.hostWindow).map(s => ({id:s.modelData,holding:s.holding,geometry:root.taskRect(s)}))});
+            return JSON.stringify({appDragging:root.appDragItem!==null,freeLayout:cfg.freeLayout,reserveSpace:cfg.reserveSpace,nativeReservation:root.nativeReservation,groupDrag:root.dragGroupId,mergeTarget:root.mergePanel?root.mergePanel.groupId:"",locale:LocaleState.language,date:LocaleState.locale.toString(new Date(),"dddd, d MMMM yyyy"),groups:root.layoutGroups,panels:root.bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>({id:p.groupId,selected:root.dragGroupId===p.groupId,border:p.border.width,opacity:root.groupAlpha(p.groupId),geometry:root.taskRect(p),items:p.model})),calendars:root.calendarControllers.filter(c => c && c.clockTarget).map(c => ({open:c.calOpen,geometry:root.taskRect(c.clockTarget)})),dragging:root.dragItem ? root.dragItem.modelData : "",
+                modules:root.moduleSlots.filter(s => s && s.hostWindow).map(s => ({id:s.modelData,holding:s.holding,opacity:root.moduleAlpha(s.modelData),vertical:s.moduleVertical,geometry:root.taskRect(s)}))});
         }
         function nativeAppDrag(address:string,token:string):void {
             if(Number(token)<=root.appDragClosedToken)return;
@@ -853,6 +889,10 @@ Scope {
                 else it.secondaryAction();
             }
             onWheel: wheel => {
+                if (pressedButtons & Qt.LeftButton) {
+                    const slot=slotParent();if(slot&&!root.dragItem&&!root.dragGroupId)root.beginModuleDrag(slot,Qt.point(slot.width/2,slot.height/2));
+                    wheel.accepted=root.adjustSelectionOpacity(wheel.angleDelta.y);return;
+                }
                 wheel.accepted = it.scrollHint !== "" && !it.disabled;
                 if (wheel.accepted) it.scrolled(wheel.angleDelta.y);
             }
@@ -894,6 +934,7 @@ Scope {
         implicitHeight: mod.moduleVertical ? Math.max(20, content.implicitHeight + 8)
                                       : Math.max(root.panelThick - 2, content.implicitHeight)
 
+        TextMetrics {id:glyphMetrics;font:glyphText.font;text:mod.shownGlyph}
         GridLayout {
             id: content
             anchors.centerIn: parent
@@ -903,18 +944,23 @@ Scope {
             columnSpacing: mod.spacing
 
             Text {
+                id:glyphText
+                Layout.preferredWidth:Math.max(mod.glyphSize,glyphMetrics.tightBoundingRect.width)
                 visible: mod.shownGlyph !== ""
                 Layout.alignment: Qt.AlignCenter
-                horizontalAlignment: Text.AlignHCenter
+                horizontalAlignment: Text.AlignLeft
                 text: mod.shownGlyph
                 color: mod.fg
                 font.family: Theme.iconFont
                 font.pixelSize: mod.glyphSize
                 renderType: Text.NativeRendering
-                transform: Scale {
-                    yScale: mod.glyphScaleY
-                    origin.y: height / 2
-                }
+                // Nerd Font symbols may paint beyond their monospace advance.
+                // Centre the visible ink rather than its narrower advance cell.
+                transform: [Translate {
+                    x:(glyphText.width-glyphMetrics.tightBoundingRect.width)/2-glyphMetrics.tightBoundingRect.x
+                    y:glyphText.height/2-(glyphText.baselineOffset+glyphMetrics.tightBoundingRect.y+glyphMetrics.tightBoundingRect.height/2)
+                }, Scale {yScale:mod.glyphScaleY;origin.y:glyphText.height/2}]
+
             }
             Text {
                 visible: mod.shown !== ""
@@ -938,6 +984,7 @@ Scope {
         Behavior on x {enabled:root.dragItem!==null;NumberAnimation{duration:100}}
         Behavior on y {enabled:root.dragItem!==null;NumberAnimation{duration:100}}
         z: root.dragItem === moduleSlot ? 1000 : 0
+        opacity: root.moduleAlpha(modelData)
         readonly property bool holding: root.dragItem === moduleSlot
         readonly property bool moduleSlotMarker: true
         property var owningPanel: null
@@ -987,11 +1034,11 @@ Scope {
         height: Math.max(!rotatedVertical?root.panelThick:0,metrics.height+2*root.bubblePadding)
         opacity:root.dragMoved&&root.dragItem&&model.length===1&&model[0]===root.dragItem.modelData?0:1
         radius: root.barRadius
-        color: root.joined&&!cfg.freeLayout?"transparent":root.bgColor
+        color: root.joined&&!cfg.freeLayout?"transparent":Qt.alpha(root.bgColor,root.groupAlpha(groupId))
         border.width: root.dragGroupId===groupId||root.mergePanel===panel?2:cfg.border&&!root.joined?1:0
         border.color: root.dragGroupId===groupId||root.mergePanel===panel?Theme.accent:root.borderColor
-        Behavior on x {enabled:root.dragGroupId!==groupId;NumberAnimation{duration:100}}
-        Behavior on y {enabled:root.dragGroupId!==groupId;NumberAnimation{duration:100}}
+        Behavior on x {enabled:(root.dragItem!==null||root.dragGroupId!=="")&&root.dragGroupId!==groupId;NumberAnimation{duration:100}}
+        Behavior on y {enabled:(root.dragItem!==null||root.dragGroupId!=="")&&root.dragGroupId!==groupId;NumberAnimation{duration:100}}
         MouseArea {
             id:bubbleDrag;anchors.fill:parent;acceptedButtons:Qt.LeftButton|Qt.RightButton;pressAndHoldInterval:300
 
@@ -1001,6 +1048,7 @@ Scope {
             onPositionChanged:mouse=>{if(!(pressedButtons&Qt.LeftButton))return;if(!root.dragGroupId&&Math.hypot(mouse.x-pressedAt.x,mouse.y-pressedAt.y)>6)root.beginGroupDrag(panel,pressedAt);root.updateGroupDrag(panel,Qt.point(mouse.x,mouse.y));}
             onReleased:mouse=>{if(mouse.button===Qt.LeftButton)root.finishGroupDrag(panel);}
             onCanceled:root.cancelModuleDrag()
+            onWheel:wheel=>{if(pressedButtons&Qt.LeftButton){if(!root.dragGroupId&&!root.dragItem)root.beginGroupDrag(panel,pressedAt);wheel.accepted=root.adjustSelectionOpacity(wheel.angleDelta.y);}else wheel.accepted=false;}
         }
         Item {
             id:laneItem;anchors.centerIn:parent;width:panel.metrics.width;height:panel.metrics.height
@@ -1224,8 +1272,12 @@ Scope {
     Component {
         id: wsC
         Item {
-            implicitWidth: root.vertical ? root.panelThick : wsLane.implicitWidth + 12
-            implicitHeight: wsLane.implicitHeight + (root.vertical ? 12 : 0)
+            id: workspaceModule
+            readonly property bool moduleVertical: root.moduleIsVertical(workspaceModule)
+            property var pressedSlot:null
+            function slotParent(){let p=parent;while(p){if(p.moduleSlotMarker===true)return p;p=p.parent;}return null;}
+            implicitWidth: workspaceModule.moduleVertical ? root.panelThick : wsLane.implicitWidth + 12
+            implicitHeight: wsLane.implicitHeight + (workspaceModule.moduleVertical ? 12 : 0)
 
             Lane {
                 id: wsLane
@@ -1239,9 +1291,9 @@ Scope {
                         required property var modelData
                         visible: modelData.id > 0
                         Layout.alignment: Qt.AlignCenter
-                        implicitWidth: root.vertical ? cfg.wsDot
+                        implicitWidth: workspaceModule.moduleVertical ? cfg.wsDot
                                      : (modelData.focused ? Math.round(cfg.wsDot * 3.2) : cfg.wsDot)
-                        implicitHeight: root.vertical ? (modelData.focused ? Math.round(cfg.wsDot * 2.4) : cfg.wsDot)
+                        implicitHeight: workspaceModule.moduleVertical ? (modelData.focused ? Math.round(cfg.wsDot * 2.4) : cfg.wsDot)
                                                       : cfg.wsDot
                         radius: cfg.wsDot / 2
                         color: modelData.urgent ? Theme.danger
@@ -1258,8 +1310,14 @@ Scope {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             acceptedButtons: Qt.LeftButton | Qt.RightButton
-                            onPressed: { dotTip.suppressed = true; dotTip.shown = false; }
+                            pressAndHoldInterval:450
+                            onPressed:mouse=>{dotTip.suppressed=true;dotTip.shown=false;if(mouse.button===Qt.LeftButton)workspaceModule.pressedSlot=workspaceModule.slotParent();}
+                            onPressAndHold:mouse=>{const slot=workspaceModule.pressedSlot;if(slot&&mouse.button===Qt.LeftButton){preventStealing=true;root.beginModuleDrag(slot,dotMa.mapToItem(slot,mouse.x,mouse.y));}}
+                            onPositionChanged:mouse=>{const slot=workspaceModule.pressedSlot;if(slot&&root.dragItem===slot)root.updateModuleDrag(slot,dotMa.mapToItem(slot,mouse.x,mouse.y));}
+                            onReleased:mouse=>{if(mouse.button!==Qt.LeftButton)return;if(root.dragItem===workspaceModule.pressedSlot)root.finishModuleDrag();workspaceModule.pressedSlot=null;preventStealing=false;}
+                            onCanceled:{if(root.dragItem===workspaceModule.pressedSlot)root.cancelModuleDrag();workspaceModule.pressedSlot=null;preventStealing=false;}
                             onClicked: mouse => {
+                                if(root.dragItem||root.dragGroupId||Date.now()<root.ignoreClickUntil)return;
                                 if (mouse.button === Qt.RightButton) root.openSettings();
                                 else Hyprland.dispatch("hl.dsp.focus({ workspace = " + dot.modelData.id + " })");
                             }
@@ -1279,8 +1337,8 @@ Scope {
             WheelHandler {
                 enabled: cfg.wsScroll
                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                onWheel: e => root.run("hyprctl dispatch 'hl.dsp.focus({workspace=\"e"
-                                       + (e.angleDelta.y > 0 ? "+1" : "-1") + "\"})'")
+                onWheel: e => { if(workspaceModule.pressedSlot&&!root.dragItem&&!root.dragGroupId)root.beginModuleDrag(workspaceModule.pressedSlot,Qt.point(0,0)); if(root.dragItem || root.dragGroupId){root.adjustSelectionOpacity(e.angleDelta.y);e.accepted=true;return;} root.run("hyprctl dispatch 'hl.dsp.focus({workspace=\"e"
+                                       + (e.angleDelta.y > 0 ? "+1" : "-1") + "\"})'"); }
             }
         }
     }
@@ -1529,12 +1587,12 @@ Scope {
     Component {
         id: opacityC
         Mod {
-            id:opacityButton;glyph:"◐";glyphSize:root.sz.icon
+            id:opacityButton;glyph:"󰗌";glyphSize:root.sz.icon
             tip:LocaleState.tr("Opacité des fenêtres","Window opacity")
             primaryHint:LocaleState.tr("Régler l’opacité","Adjust opacity")
             secondaryHint:LocaleState.tr("Déverrouiller toutes les fenêtres","Unlock all windows")
             scrollHint:LocaleState.tr("Régler l’opacité du bureau","Adjust workspace opacity")
-            onPrimary:if(root.volumeController)root.volumeController.showOpacity(opacityButton)
+            onPrimary:root.run("qs ipc call settings opacity")
             onHoveredChanged:if(hovered&&root.opacityController)root.opacityController.prepareOsd()
             onScrolled:delta=>{if(root.opacityController)root.opacityController.adjustOsd(delta/120);if(root.volumeController)root.volumeController.showOpacity(opacityButton);}
             onSecondary:if(root.opacityController)root.opacityController.resetAll()
@@ -1545,7 +1603,7 @@ Scope {
         Mod {
             id: brightnessButton
             glyphSize: root.sz.icon
-            glyph: "☀"
+            glyph: "󰃠"
             tip: LocaleState.tr("Luminosité : ", "Brightness: ") + Math.round(BrightnessState.value*100) + "%"
             primaryHint: LocaleState.tr("Ouvrir les paramètres de luminosité", "Open brightness settings")
             scrollHint: LocaleState.tr("Régler la luminosité", "Adjust brightness")
@@ -1624,8 +1682,8 @@ Scope {
                 left: cfg.freeLayout || cfg.position !== "right"
                 right: cfg.freeLayout || cfg.position !== "left"
             }
-            implicitWidth: root.vertical ? Math.max(root.panelThick,...root.bubblePanels.filter(p=>p&&p.hostWindow===bar).map(p=>p.width))+root.effEdge : 0
-            implicitHeight: root.vertical ? 0 : Math.max(root.panelThick,...root.bubblePanels.filter(p=>p&&p.hostWindow===bar).map(p=>p.height))+root.effEdge
+            implicitWidth: root.vertical ? Math.max(root.panelThick,...root.bubblePanels.filter(p=>p&&p.hostWindow===bar).map(p=>p.width))+2*root.effEdge : 0
+            implicitHeight: root.vertical ? 0 : Math.max(root.panelThick,...root.bubblePanels.filter(p=>p&&p.hostWindow===bar).map(p=>p.height))+2*root.effEdge
             exclusionMode: cfg.reserveSpace && !cfg.freeLayout && !root.nativeReservation ? ExclusionMode.Auto : ExclusionMode.Ignore
             color: "transparent"
             property Region completeRegion: Region { item: frame }

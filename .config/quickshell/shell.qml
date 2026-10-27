@@ -5,7 +5,7 @@ ShellRoot {
     OpacityControl {id:opacityControl;barPosition:desktopBar.notificationPosition;uiScale:desktopBar.config.scale}
     VolumeOsd { id: volumeOsd; barPosition: desktopBar.notificationPosition; brightnessStep: desktopBar.config.volStep; opacityController:opacityControl }
     ScreenshotOsd {}
-    SettingsWindow { id: settings }
+    SettingsWindow { id: settings; opacityController:opacityControl }
     Notifications { id: notifications; barPosition: desktopBar.notificationPosition }
     RecorderOSD {}
     PowerMenu { id: power; barPosition: desktopBar.notificationPosition }

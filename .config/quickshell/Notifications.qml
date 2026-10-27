@@ -30,6 +30,8 @@ Scope {
     property int maxHistory: 100
 
     property bool dnd: false
+    property bool nightMode: false
+    property bool beforeNightDnd: false
     property bool soundEnabled: true
     property bool panelOpen: false
     property bool stateReady: false
@@ -163,7 +165,21 @@ Scope {
     function copyText(s, b) { Quickshell.execDetached(["wl-copy", b !== "" ? s + "\n" + b : s]); }
     function copyRaw(s) { Quickshell.execDetached(["wl-copy", s]); }
 
-    function toggleDnd() { dnd = !dnd; stateTimer.restart(); }
+    function toggleDnd() { nightMode = false; beforeNightDnd = false; dnd = !dnd; stateTimer.restart(); }
+    function setNight(enabled) {
+        if (enabled) {
+            if (!nightMode) beforeNightDnd = dnd;
+            nightMode = true;
+            dnd = true;
+            // Hide existing popups without clearing the notification history.
+            for (const n of server.trackedNotifications.values.slice()) n.tracked = false;
+        } else if (nightMode) {
+            nightMode = false;
+            dnd = beforeNightDnd;
+            beforeNightDnd = false;
+        }
+        stateTimer.restart();
+    }
     function toggleSound() { soundEnabled = !soundEnabled; stateTimer.restart(); }
     function resetPosition() {
         offsetX = 0;
@@ -368,6 +384,7 @@ Scope {
     }
 
     function dndBlocks(n) {
+        if (nightMode) return true;
         if (!dnd) return false;
         const app = (n.appName || "").toLowerCase();
         if (app === "battery") return false;              // always show battery alerts
@@ -398,6 +415,8 @@ Scope {
         function clear(): void { root.clearHistory(); }
         function dnd(): void { root.toggleDnd(); }
         function isDnd(): bool { return root.dnd; }
+        function night(enabled: bool): void { root.setNight(enabled); }
+        function isNight(): bool { return root.nightMode; }
         function sound(): void { root.toggleSound(); }
         function collapseAll(): void { root.toggleCollapseAll(); }
     }
@@ -415,6 +434,8 @@ Scope {
             try {
                 const s = JSON.parse(text());
                 if (typeof s.dnd === "boolean") root.dnd = s.dnd;
+                if (typeof s.nightMode === "boolean") root.nightMode = s.nightMode;
+                if (typeof s.beforeNightDnd === "boolean") root.beforeNightDnd = s.beforeNightDnd;
                 if (typeof s.soundEnabled === "boolean") root.soundEnabled = s.soundEnabled;
                 if (typeof s.menuSize === "number") root.menuSize = Math.max(60, Math.min(200, Math.round(s.menuSize)));
                 if (typeof s.offsetX === "number") root.offsetX = s.offsetX;
@@ -451,6 +472,7 @@ Scope {
             for (const k in root.collapsedApps) if (root.collapsedApps[k]) coll.push(k);
             stateFile.setText(JSON.stringify({
                 dnd: root.dnd,
+                nightMode: root.nightMode, beforeNightDnd: root.beforeNightDnd,
                 soundEnabled: root.soundEnabled,
                 menuSize: root.menuSize,
                 offsetX: root.offsetX,

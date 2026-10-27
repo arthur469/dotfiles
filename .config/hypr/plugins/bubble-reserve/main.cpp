@@ -44,23 +44,27 @@ void readState() {
     }
 }
 void position(Layout::CWindowTarget* target,uint8_t flags) {
-    reinterpret_cast<UpdatePosition>(hook->m_original)(target,flags);
     readState();
-    if(!enabled)return;
     const auto window=target->window();
-    if(!window || !window->m_isMapped || !window->m_monitor)return;
-    const auto fullscreen=Fullscreen::controller()->getFullscreenModes(window);
-    if(fullscreen.internal==Fullscreen::FSMODE_FULLSCREEN || fullscreen.client==Fullscreen::FSMODE_FULLSCREEN)return;
-    const auto found=obstacles.find(window->m_monitor->m_name);
-    if(found==obstacles.end())return;
+    const auto found=window && window->m_monitor ? obstacles.find(window->m_monitor->m_name) : obstacles.end();
+    bool reserve=enabled && window && window->m_isMapped && found!=obstacles.end();
+    if(reserve) {
+        const auto fullscreen=Fullscreen::controller()->getFullscreenModes(window);
+        reserve=fullscreen.internal!=Fullscreen::FSMODE_FULLSCREEN && fullscreen.client!=Fullscreen::FSMODE_FULLSCREEN;
+    }
+    // Compute the native geometry without first configuring an intermediate
+    // client size. Steam otherwise reacts to two alternating sizes per pass.
+    reinterpret_cast<UpdatePosition>(hook->m_original)(target,reserve?flags|Layout::TARGET_UPDATE_NO_CLIENT_CONFIGURE:flags);
+    if(!reserve || !window->m_isMapped)return;
     const auto original=window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_GOAL);
     const auto next=BubbleReserve::project({original.x,original.y,original.w,original.h},found->second,margin+window->getRealBorderSize());
-    if(std::abs(next.x-original.x)<.5&&std::abs(next.y-original.y)<.5&&std::abs(next.w-original.w)<.5&&std::abs(next.h-original.h)<.5)return;
-    g_pHyprRenderer->damageWindow(window);
-    window->setBox({next.x,next.y,next.w,next.h});
-    window->updateWindowDecos();
+    if(std::abs(next.x-original.x)>=.5||std::abs(next.y-original.y)>=.5||std::abs(next.w-original.w)>=.5||std::abs(next.h-original.h)>=.5) {
+        g_pHyprRenderer->damageWindow(window);
+        window->setBox({next.x,next.y,next.w,next.h});
+        window->updateWindowDecos();
+        g_pHyprRenderer->damageWindow(window);
+    }
     if(!(flags&Layout::TARGET_UPDATE_NO_CLIENT_CONFIGURE))window->sendWindowSize();
-    g_pHyprRenderer->damageWindow(window);
 }
 void refresh() {
     readState();

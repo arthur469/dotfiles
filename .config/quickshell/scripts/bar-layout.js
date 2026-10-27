@@ -108,9 +108,31 @@ function clampRect(r,width,height) {return Object.assign({},r,{x:Math.max(0,Math
 // Place the interacted bubble first, then its nearest neighbours. Moving a
 // neighbour may therefore push the next one; original anchors are never saved
 // merely because a temporary Open apps expansion displaced another bubble.
-function solve(rectangles,width,height,priority,axis,gap,ignored) {
+function solve(rectangles,width,height,priority,axis,gap,ignored,orderAxis) {
     gap=Math.max(0,gap||0);ignored=ignored||[];
     const input=rectangles.map(r=>clampRect(r,width,height));
+    // Expansion is a temporary change in size, not an instruction to reorder
+    // neighbouring bubbles. Pack each shared band in its saved anchor order.
+    if(orderAxis && !ignored.length) {
+        const along=orderAxis==='y'?'y':'x',cross=orderAxis==='y'?'x':'y';
+        const size=orderAxis==='y'?'height':'width',crossSize=orderAxis==='y'?'width':'height',limit=orderAxis==='y'?height:width;
+        const remaining=input.slice(),bands=[];
+        while(remaining.length){const band=[remaining.shift()];let changed=true;
+            while(changed){changed=false;for(let i=remaining.length-1;i>=0;i--){const r=remaining[i];if(band.some(p=>r[cross]<p[cross]+p[crossSize]+gap&&r[cross]+r[crossSize]+gap>p[cross])){band.push(r);remaining.splice(i,1);changed=true;}}}
+            bands.push(band);
+        }
+        if(bands.every(b=>b.reduce((sum,r)=>sum+r[size],0)+gap*(b.length-1)<=limit)) {
+            const result={};
+            for(const band of bands){band.sort((a,b)=>(a.order===undefined?a[along]:a.order)-(b.order===undefined?b[along]:b.order));
+                const placed=band.map(r=>Object.assign({},r));
+                for(let i=1;i<placed.length;i++)placed[i][along]=Math.max(placed[i][along],placed[i-1][along]+placed[i-1][size]+gap);
+                for(let i=placed.length-1;i>=0;i--)placed[i][along]=Math.min(placed[i][along],i===placed.length-1?limit-placed[i][size]:placed[i+1][along]-gap-placed[i][size]);
+                if(placed[0][along]<0){placed[0][along]=0;for(let i=1;i<placed.length;i++)placed[i][along]=Math.max(placed[i][along],placed[i-1][along]+placed[i-1][size]+gap);}
+                for(const r of placed)result[r.id]=r;
+            }
+            return {positions:result,crowded:false};
+        }
+    }
     const leader=input.find(r=>r.id===priority),distance=r=>leader?Math.hypot((r.x+r.width/2)-(leader.x+leader.width/2),(r.y+r.height/2)-(leader.y+leader.height/2)):0;
     const order=input.slice().sort((a,b)=>a.id===priority?-1:b.id===priority?1:distance(a)-distance(b));
     const placed=[],result={};let crowded=false;

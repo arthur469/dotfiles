@@ -22,6 +22,16 @@ def group_processes(rows,kind,sort='usage',metadata=None,windows=None):
   try:windows=json.loads(subprocess.check_output(['hyprctl','-j','clients'],text=True,timeout=2))
   except (OSError,ValueError,subprocess.SubprocessError):windows=[]
  anchors={w['pid']:w.get('class') or metadata.get(w['pid'],{}).get('name','Application') for w in windows if w.get('pid') in metadata and w.get('mapped',True)}
+ # Steam maps its window from a supervised web helper. Anchor at the real
+ # client, otherwise terminating the UI helper just makes Steam recreate it.
+ for pid,label in list(anchors.items()):
+  if label.casefold()!='steam':continue
+  q=pid;seen=set();owner=metadata[pid].get('uid')
+  while q in metadata and q not in seen and metadata[q].get('uid')==owner:
+   seen.add(q)
+   if Path(metadata[q].get('exe','')).name=='steam':
+    del anchors[pid];anchors[q]=label;break
+   q=metadata[q].get('ppid',0)
  def key(pid):
   seen=set();q=pid;root=pid;exe=metadata.get(pid,{}).get('exe')
   while q in metadata and q not in seen:
