@@ -20,19 +20,17 @@ case "${img,,}" in
 
         # mpvpaper can't do transitions, so stop the old one, let awww animate
         # to the video's first frame, then start mpvpaper on top once it's done
-        pkill -x mpvpaper
+        python3 "$HOME/.config/quickshell/hyprquickpaper/live-control.py" --stop >>"$HOME/.cache/43pr/mpvpaper.log" 2>&1
         if [[ -n "$theme_img" ]]; then
             awww img "$theme_img" -t outer --transition-duration 1
             sleep 1
         fi
         python3 "$HOME/.config/quickshell/hyprquickpaper/live-control.py" --start "$img" \
             >>"$HOME/.cache/43pr/mpvpaper.log" 2>&1
-        echo "$img" > "$HOME/.cache/43pr/last-live"
         ;;
     *)
         # static/GIF wallpaper: stop any live wallpaper so it doesn't cover awww
-        pkill -x mpvpaper
-        rm -f "$HOME/.cache/43pr/last-live"
+        python3 "$HOME/.config/quickshell/hyprquickpaper/live-control.py" --stop >>"$HOME/.cache/43pr/mpvpaper.log" 2>&1
 
         # awww handles GIFs natively and keeps them animated
         awww img "$img" -t outer --transition-duration 1

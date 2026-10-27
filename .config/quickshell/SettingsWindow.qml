@@ -313,7 +313,7 @@ Scope {
 
     IpcHandler { // ipc call
         target: "settings"
-        function diagnostic():string {return JSON.stringify({open:root.showing,page:root.navItems[root.selectedIndex].page,x:root.cardX,y:root.cardY,width:root.cardWidth,height:root.cardHeight,bindings:root.activePage&&root.activePage.shortcutDiagnostic?root.activePage.shortcutDiagnostic():[]});}
+        function diagnostic():string {return JSON.stringify({open:root.showing,page:root.navItems[root.selectedIndex].page,x:root.cardX,y:root.cardY,width:root.cardWidth,height:root.cardHeight,zoom:root.activePage&&root.activePage.zoomDiagnostic?root.activePage.zoomDiagnostic():null,bindings:root.activePage&&root.activePage.shortcutDiagnostic?root.activePage.shortcutDiagnostic():[]});}
         function toggle(): void { root.toggle() }
         function show(): void { root.show() }
         function hide(): void { root.hide() }

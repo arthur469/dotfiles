@@ -59,12 +59,14 @@ Item {
         border.width: 1
         border.color: Theme.border
 
-        Text {
-            anchors.centerIn: parent
-            text: root.icon
-            color: root.accentColor
-            font.family: Theme.iconFont
-            font.pixelSize: 12
+        Item {width:12;height:12;anchors.centerIn:parent
+            TextMetrics{id:iconMetrics;font:iconGlyph.font;text:iconGlyph.text;renderType:Text.QtRendering}
+            Text{id:iconGlyph;text:root.icon;color:root.accentColor;font.family:Theme.iconFont;font.pixelSize:48;renderType:Text.QtRendering
+                readonly property real fit:12/Math.max(1,iconMetrics.tightBoundingRect.width,iconMetrics.tightBoundingRect.height)
+                x:6-(iconMetrics.tightBoundingRect.x+iconMetrics.tightBoundingRect.width/2)*fit
+                y:6-(baselineOffset+iconMetrics.tightBoundingRect.y+iconMetrics.tightBoundingRect.height/2)*fit
+                scale:fit;transformOrigin:Item.TopLeft
+            }
         }
 
         MouseArea {

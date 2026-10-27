@@ -173,3 +173,23 @@ function resizeModules(values,ids,delta) {
     ids.forEach((id,i)=>output[id]=Math.round(before[i]*ratio*10000)/10000);
     return {values:output,average:ids.reduce((sum,id)=>sum+output[id],0)/ids.length};
 }
+
+// Edge-attached objects reserve only the normal axis; floating ones use both.
+function edgePadding(rect,width,height,margin,preferred) {
+    const distances={left:rect.x,right:width-rect.x-rect.width,top:rect.y,bottom:height-rect.y-rect.height};
+    const near=Object.keys(distances).filter(k=>distances[k]<=margin+2);
+    near.sort((a,b)=>Math.abs(distances[a]-distances[b])<1?(a===preferred?-1:b===preferred?1:0):distances[a]-distances[b]);
+    const edge=near.length?near[0]:"";
+    return {edge:edge,gapX:edge==="top"||edge==="bottom"?0:margin,gapY:edge==="left"||edge==="right"?0:margin};
+}
+function overlapArea(a,b) {return Math.max(0,Math.min(a.x+a.width,b.x+b.width)-Math.max(a.x,b.x))*Math.max(0,Math.min(a.y+a.height,b.y+b.height)-Math.max(a.y,b.y));}
+function placementTarget(rect,targets,previous) {
+    const ranked=targets.map(t=>({target:t,score:overlapArea(rect,t)/Math.max(1,Math.min(rect.width*rect.height,t.width*t.height))})).filter(t=>t.score>0.04).sort((a,b)=>b.score-a.score);
+    if(!ranked.length)return null;
+    const retained=ranked.find(t=>t.target.id===previous);
+    return retained&&retained.score>=ranked[0].score*0.85?retained.target:ranked[0].target;
+}
+function insertionSide(rect,anchor) {
+    const dx=rect.x+rect.width/2-anchor.x-anchor.width/2,dy=rect.y+rect.height/2-anchor.y-anchor.height/2;
+    return Math.abs(dx)/Math.max(1,anchor.width)>Math.abs(dy)/Math.max(1,anchor.height)?(dx<0?"left":"right"):(dy<0?"top":"bottom");
+}

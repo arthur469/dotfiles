@@ -45,8 +45,19 @@ def update(state):
    if any(type(v) not in (int,float) or not math.isfinite(v) for v in vals):raise ValueError('Invalid bubble bounds')
    x,y,w,h=vals
    if not 0<w<=20000 or not 0<h<=20000:continue
-   rows.append(json.dumps(name)+' '+str(round(m['x']+x,2))+' '+str(round(m['y']+y,2))+' '+str(round(w,2))+' '+str(round(h,2)))
-  text=str(int(bool(state.get('active'))))+' '+str(margin)+'\n'+'\n'.join(rows)+'\n'
+   gaps=[r.get('gapX',margin),r.get('gapY',margin)]
+   if any(type(v) not in (int,float) or not math.isfinite(v) or not 0<=v<=200 for v in gaps):raise ValueError('Invalid directional margin')
+   rows.append(json.dumps(name)+' '+str(round(m['x']+x,2))+' '+str(round(m['y']+y,2))+' '+str(round(w,2))+' '+str(round(h,2))+' '+' '.join(str(round(v,2)) for v in gaps))
+  # The existing binds.lua remains the single source for the Opacity key.
+  binds=Path.home()/'.config/quickshell/state/binds.lua';spec='O'
+  if binds.exists():
+   match=re.search(r'^\s*(?:local\s+)?kb_opacity\s*=\s*[\"\']([^\"\']+)[\"\']',binds.read_text(),re.M)
+   if match:spec=match.group(1)
+  tokens=[t.strip().upper() for t in spec.split('+') if t.strip()];mods=64
+  modifiers={'SHIFT':1,'CTRL':4,'CONTROL':4,'ALT':8,'SUPER':64,'META':64}
+  for token in tokens[:-1]:mods|=modifiers.get(token,0)
+  symbol=tokens[-1] if tokens and re.fullmatch(r'[A-Z0-9_]{1,40}',tokens[-1]) else 'O'
+  text=str(int(bool(state.get('active'))))+' '+str(margin)+' '+str(int(bool(state.get('interactive',True))))+' '+str(int(bool(state.get('modal',False))))+' '+str(mods)+' '+json.dumps(symbol)+'\n'+'\n'.join(rows)+'\n'
   target=session/'reservation.txt';changed=not target.exists() or target.read_text()!=text
   if changed:atomic(target,text)
   plugins=json.loads(ctl('-j','plugin','list'))
@@ -62,7 +73,7 @@ def update(state):
   loaded=next((p for p in plugins if p.get('name')=='43pr-bubble-reserve'),{})
   version=re.match(r'^(\d+)\.(\d+)\.(\d+)',str(loaded.get('version','')))
   control_bridge=bool(version and tuple(map(int,version.groups()))>=(0,2,0))
-  return {'ready':ready,'controlBridge':control_bridge,'active':bool(state.get('active')) and ready,'rectangles':len(rows),'margin':margin}
+  return {'ready':ready,'controlBridge':control_bridge,'opacityKey':spec,'inputBridge':bool(version and tuple(map(int,version.groups()))>=(0,3,0)),'active':bool(state.get('active')) and ready,'rectangles':len(rows),'margin':margin}
 if __name__=='__main__':
  p=argparse.ArgumentParser();p.add_argument('--state',required=True);a=p.parse_args()
  try:print(json.dumps(update(json.loads(a.state))))

@@ -22,7 +22,7 @@ Scope {
     readonly property var defaults: ({
         // layout
         position: "left", style: "joined", thickness: 20, margin: 4,
-        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), groupRotations: ({}), groupOpacity: ({}), moduleOpacity: ({}), moduleScale: ({}), autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
+        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), groupRotations: ({}), groupOpacity: ({}), moduleOpacity: ({}), moduleScale: ({}), moduleZoom:1, autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
         // appearance
         scale: 1.0, bgOpacity: 0.5, border: false, radius: 16, calRadius: 15,
         // tooltips
@@ -74,6 +74,7 @@ Scope {
             property var groupOpacity: root.defaults.groupOpacity
             property var moduleOpacity: root.defaults.moduleOpacity
             property var moduleScale:root.defaults.moduleScale
+            property real moduleZoom:root.defaults.moduleZoom
             property bool autoGroup: root.defaults.autoGroup
             property bool quickFloatRetile: root.defaults.quickFloatRetile
             property bool reserveSpace: root.defaults.reserveSpace   // push windows away from the bar
@@ -142,7 +143,7 @@ Scope {
     readonly property int iconYOffset: 1
 
     // margin for one side of the bar frame
-    function edgeMargin(side) { return effEdge; }
+    function edgeMargin(side) { return cfg.freeLayout ? 0 : ((vertical ? side==="left"||side==="right" : side==="top"||side==="bottom") ? effEdge : 0); }
 
     // ───────────────────────── App icon resolution ─────────────────────────
     // Resolves an icon for ANY window (rofi, Steam, Electron apps, XWayland
@@ -333,20 +334,32 @@ Scope {
     property var bubblePanels: []
     property bool nativeReservation: false
     property bool nativeControlBridge:false
-    readonly property string reservedBubbleState: JSON.stringify({active:cfg.reserveSpace && barVisible && barLive,margin:cfg.margin,
+    property bool nativeInputBridge:false
+    property bool nativeLeftHeld:false
+    property bool discardReleaseClick:false
+    Timer{id:releaseClickTimer;interval:250;onTriggered:root.discardReleaseClick=false}
+    property string lastNativeKind:""
+    property real lastNativeDelta:0
+    property double nativeInputToken:0
+    property double closedNativeToken:-1
+    property point nativePressPoint:Qt.point(0,0)
+    readonly property bool manipulating:!!dragItem||dragGroupId!==""||editOpen
+    function reservationRect(panel){const r=root.taskRect(panel),pad=BarLayout.edgePadding(r,panel.hostWindow.screen.width,panel.hostWindow.screen.height,root.effEdge,cfg.position);return Object.assign({},r,{gapX:pad.gapX,gapY:pad.gapY});}
+    readonly property string reservedBubbleState: JSON.stringify({active:cfg.reserveSpace && barVisible && barLive,margin:root.effEdge,interactive:barVisible&&barLive&&!editOpen,modal:editOpen,
         minimized:taskButtons.filter(t=>t&&t.isMinimized&&t.visible).map(t=>({address:"0x"+t.hyprHandle.address.replace(/^0x/,""),geometry:root.taskRect(t)})),
-        rectangles:bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>root.taskRect(p))})
+        rectangles:bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>root.reservationRect(p))})
     Connections {
         target:Hyprland
         function onRawEvent(event) {
+            if(event.name==="43pr_bubble_input"){root.nativeInput(event.data);return;}
             if(event.name==="43pr_bubble_control"){root.nativeControlHeld=event.data.trim()==="1";return;}
             if(event.name==="43pr_bubble_rotate"){root.rotateDrag();return;}
-            if(cfg.reserveSpace&&['openwindow','changefloatingmode','movewindow','movewindowv2','activewindowv2'].includes(event.name))reserveBubbleTimer.restart();
+            if(cfg.reserveSpace&&['openwindow','changefloatingmode','movewindow','movewindowv2','activewindowv2','configreloaded'].includes(event.name))reserveBubbleTimer.restart();
         }
     }
-    onReservedBubbleStateChanged: reserveBubbleTimer.restart()
+    onReservedBubbleStateChanged: {if(root.manipulating){if(!reserveBubbleTimer.running)reserveBubbleTimer.start();}else reserveBubbleTimer.restart();}
     Timer { id:reserveBubbleTimer;interval:180;onTriggered:{if(reserveBubbleWorker.running){restart();return;}reserveBubbleWorker.command=["python3",Qt.resolvedUrl("scripts/bubble-space.py").toString().replace("file://",""),"--state",root.reservedBubbleState];reserveBubbleWorker.running=true;} }
-    Process {id:reserveBubbleWorker;stdout:StdioCollector{onStreamFinished:{try{const state=JSON.parse(text);root.nativeReservation=state.ready;root.nativeControlBridge=state.controlBridge===true;}catch(e){root.nativeReservation=false;root.nativeControlBridge=false;}}}stderr:StdioCollector{onStreamFinished:if(text.trim())console.warn("Bubble reservation: "+text.trim())}}
+    Process {id:reserveBubbleWorker;stdout:StdioCollector{onStreamFinished:{try{const state=JSON.parse(text);root.nativeReservation=state.ready;root.nativeControlBridge=state.controlBridge===true;root.nativeInputBridge=state.inputBridge===true;}catch(e){root.nativeReservation=false;root.nativeControlBridge=false;root.nativeInputBridge=false;}}}stderr:StdioCollector{onStreamFinished:if(text.trim())console.warn("Bubble reservation: "+text.trim())}}
 
     property var calendarControllers: []
     property string layoutPriority: ""
@@ -361,24 +374,18 @@ Scope {
     property var dragSavedRotations: null
     property int dragModuleRotation:0
     property bool opacityGesture: false
+    property string gestureMode:""
     property real selectedOpacity: 1
     property Item opacityTarget: null
     property bool nativeControlHeld:false
-    property var selectionWheelQueue:[]
-    function queueSelectionWheel(delta,modifiers){
-        if(!nativeControlBridge)return adjustSelection(delta,modifiers);
-        selectionWheelQueue=selectionWheelQueue.concat([{delta:delta,modifiers:modifiers}]);if(!selectionWheelTimer.running)selectionWheelTimer.start();return true;
-    }
-    function flushSelectionWheel(){
-        const pending=selectionWheelQueue;selectionWheelQueue=[];selectionWheelTimer.stop();
-        for(const event of pending)adjustSelection(event.delta,nativeControlBridge?(nativeControlHeld?Qt.ControlModifier:Qt.NoModifier):event.modifiers);
-    }
-    Timer {id:selectionWheelTimer;interval:30;onTriggered:root.flushSelectionWheel()}
+        function queueSelectionWheel(delta,modifiers){return adjustSelection(delta,modifiers);}
+    function flushSelectionWheel(){}
     property bool selectionSizing:false
     property real selectedScale:1
-    function moduleFactor(id){return typeof cfg.moduleScale[id]==="number"?Math.max(0.5,Math.min(2,cfg.moduleScale[id])):1;}
+    function individualFactor(id){return typeof cfg.moduleScale[id]==="number"?Math.max(0.5,Math.min(2,cfg.moduleScale[id])):1;}
+    function moduleFactor(id){return individualFactor(id)*Math.max(0.5,Math.min(2,cfg.moduleZoom));}
     function adjustSelection(delta,modifiers){
-        if(!(modifiers&Qt.ControlModifier)) {selectionSizing=false;return adjustSelectionOpacity(delta);}
+        if(gestureMode!==""&&gestureMode!=="size")return true;gestureMode="size";
         if(!dragItem&&!dragGroupId)return false;
         const ids=dragItem?[dragItem.modelData]:(layoutGroups.find(g=>g.id===dragGroupId)||{items:[]}).items;
         if(!ids.length)return false;
@@ -389,18 +396,6 @@ Scope {
     }
     function groupAlpha(id) { return typeof cfg.groupOpacity[id]==="number"?Math.max(0.4,Math.min(1,cfg.groupOpacity[id])):1; }
     function moduleAlpha(id) { return typeof cfg.moduleOpacity[id]==="number"?Math.max(0.4,Math.min(1,cfg.moduleOpacity[id])):groupAlpha(sectionOf(id)); }
-    function adjustSelectionOpacity(delta) {
-        if (!dragItem && !dragGroupId) return false;
-        opacityGesture=true;dragMoved=false;mergePanel=null;previewCells=({});
-        const individual=!!dragItem,id=individual?dragItem.modelData:dragGroupId;
-        const value=Math.max(0.4,Math.min(1,Math.round(((individual?moduleAlpha(id):groupAlpha(id))+delta/120*0.01)*100)/100));
-        const modules=Object.assign({},cfg.moduleOpacity),groups=Object.assign({},cfg.groupOpacity);
-        if(individual)modules[id]=value;
-        else {groups[id]=value;for(const module of (layoutGroups.find(g=>g.id===id)||{items:[]}).items)modules[module]=value;}
-        cfg.moduleOpacity=modules;cfg.groupOpacity=groups;selectedOpacity=value;
-        opacityTarget=dragItem||bubblePanels.find(p=>p&&p.groupId===id&&p.hostWindow===dragWindow);
-        selectionOsdTimer.restart();save();return true;
-    }
     Timer {id:selectionOsdTimer;interval:1400}
     BarAnchor {id:selectionPlacement;position:cfg.position;target:root.opacityTarget}
     PanelWindow {
@@ -416,6 +411,142 @@ Scope {
             Slider {anchors.fill:parent;anchors.margins:14;enabled:false;icon:"󰗌";label:root.selectionSizing?LocaleState.tr("TAILLE","SIZE"):"";value:root.selectionSizing?(root.selectedScale-0.5)/1.5:(root.selectedOpacity-0.4)/0.6;displayFrom:root.selectionSizing?50:40;displayTo:root.selectionSizing?200:100;step:root.selectionSizing?1/30:1/60;displayText:Math.round((root.selectionSizing?root.selectedScale:root.selectedOpacity)*100)+"%"}
         }
     }
+    property bool editOpen:false
+    property string editScope:"module"
+    property string editId:""
+    property string editMode:"both"
+    property string editField:"size"
+    property Item editTarget:null
+    property var editScreen:null
+    property point editPoint:Qt.point(12,12)
+    property var editBefore:null
+    function slotFor(item){let p=item;while(p){if(p.moduleSlotMarker===true)return p;p=p.parent;}return null;}
+    function hitAt(x,y){
+        function inside(item){const r=root.taskRect(item),screen=item.hostWindow?item.hostWindow.screen:null;return r&&screen&&x>=r.x+screen.x&&x<r.x+screen.x+r.width&&y>=r.y+screen.y&&y<r.y+screen.y+r.height;}
+        const slot=moduleSlots.find(s=>s&&s.visible&&s.hostWindow&&inside(s));if(slot)return {item:slot,group:false};
+        const group=bubblePanels.find(p=>p&&p.visible&&p.hostWindow&&inside(p));return group?{item:group,group:true}:null;
+    }
+    function nativeInput(data){
+        const parts=data.split(","),kind=parts[0],token=Number(parts[1]),x=Number(parts[2]),y=Number(parts[3]),delta=Number(parts[4]);
+        if(!Number.isFinite(token)||!Number.isFinite(x)||!Number.isFinite(y))return;lastNativeKind=kind;if(kind==="wheel")lastNativeDelta=delta;
+        if(kind==="press"){nativeLeftHeld=true;closedNativeToken=-1;nativeInputToken=token;nativePressPoint=Qt.point(x,y);return;}
+        if(kind==="menu"||kind==="opacity-all"||kind==="opacity-target"){
+            if(manipulating)return;const hit=hitAt(x,y);if(hit)openEditor(hit.item,hit.group,kind==="menu"?"both":"opacity",kind==="opacity-all");else if(kind!=="menu"&&opacityController)root.run("qs ipc call opacity openControl "+(kind==="opacity-all"?"workspace":"window"));return;
+        }
+        if(token!==nativeInputToken)return;
+        if(kind==="cancel"){nativeLeftHeld=false;discardReleaseClick=true;cancelModuleDrag();ignoreClickUntil=Date.now()+350;return;}
+        if(kind==="release"){nativeLeftHeld=false;releaseClickTimer.restart();if(discardReleaseClick||dragItem||dragGroupId)ignoreClickUntil=Date.now()+300;if(dragItem)finishModuleDrag();else if(dragGroupId){const p=bubblePanels.find(p=>p&&p.groupId===dragGroupId&&p.hostWindow===dragWindow);if(p)finishGroupDrag(p);else cancelModuleDrag();}return;}
+        if(token===closedNativeToken)return;
+        if(kind==="wheel"||kind==="rotate"){
+            if(editOpen)return;
+            if(!dragItem&&!dragGroupId){const hit=hitAt(nativePressPoint.x,nativePressPoint.y);if(!hit)return;const r=root.taskRect(hit.item),screen=hit.item.hostWindow.screen,point=Qt.point(nativePressPoint.x-screen.x-r.x,nativePressPoint.y-screen.y-r.y);if(hit.group)beginGroupDrag(hit.item,point);else beginModuleDrag(hit.item,point);}
+            if(kind==="wheel")adjustSelection(delta,Qt.NoModifier);else rotateDrag();return;
+        }
+        if(kind==="move"&&dragWindow&&(dragItem||dragGroupId)&&!opacityGesture){
+            dragPoint=Qt.point(x-dragWindow.screen.x-(cfg.position==="right"?dragWindow.screen.width-dragWindow.width:0),y-dragWindow.screen.y-(cfg.position==="bottom"?dragWindow.screen.height-dragWindow.height:0));
+            if(Math.hypot(dragPoint.x-dragStart.x,dragPoint.y-dragStart.y)>6){dragMoved=true;gestureMode="move";}
+            if(dragMoved)findMerge(dragItem?[dragItem.modelData]:(layoutGroups.find(g=>g.id===dragGroupId)||{items:[]}).items);
+        }
+    }
+    function editorRect(item){if(!item)return {};const r=item.mapToItem(precisePanel.contentItem,0,0,item.width,item.height);return {x:r.x,y:r.y,width:r.width,height:r.height};}
+    function editorIds(){return editScope==="all"?moduleIds.concat(["clock"]):editScope==="group"?(layoutGroups.find(g=>g.id===editId)||{items:[]}).items:[editId];}
+    function editorValue(field){
+        if(field==="size"){const ids=editorIds();return editScope==="all"?cfg.moduleZoom:(ids.length?ids.reduce((sum,id)=>sum+individualFactor(id),0)/ids.length:1);}
+        return editScope==="all"?(editorIds().length?editorIds().reduce((sum,id)=>sum+moduleAlpha(id),0)/editorIds().length:1):editScope==="group"?groupAlpha(editId):moduleAlpha(editId);
+    }
+    function syncEditor(){preciseSize.control.value=(editorValue("size")-0.5)/1.5;preciseOpacity.control.value=(editorValue("opacity")-0.4)/0.6;}
+    function openEditor(target,group,mode,all){
+        if(manipulating)return;const item=group?target:slotFor(target);if(!item||!item.hostWindow)return;
+        const r=root.taskRect(item);editTarget=item;editScreen=item.hostWindow.screen;editScope=all?"all":group?"group":"module";editId=group?item.groupId:item.modelData;editMode=mode;editField=mode==="opacity"?"opacity":"size";editBefore=appearanceSnapshot();
+        editPoint=Qt.point(Math.max(8,Math.min(editScreen.width-precisePanel.cardWidth-8,r.x+r.width+8)),Math.max(8,Math.min(editScreen.height-precisePanel.cardHeight-8,r.y)));
+        processPopup.close();for(const calendar of calendarControllers)if(calendar)calendar.calOpen=false;
+        if(notificationController)notificationController.panelOpen=false;if(powerController)powerController.closeMenu();if(volumeController)volumeController.closeAll();
+        syncEditor();editOpen=true;selectionOsdTimer.stop();Qt.callLater(()=>{if(editField==="opacity")preciseOpacity.control.forceActiveFocus();else preciseSize.control.forceActiveFocus();});
+    }
+    function setEditorValue(field,value){
+        if(!editOpen||!Number.isFinite(value))return;editField=field;
+        value=Math.max(field==="opacity"?0.4:0.5,Math.min(field==="opacity"?1:2,value));const ids=editorIds();
+        if(field==="size"){
+            if(editScope==="all")cfg.moduleZoom=Math.round(value*100)/100;
+            else cfg.moduleScale=BarLayout.resizeModules(cfg.moduleScale,ids,value-editorValue("size")).values;
+        }else{
+            const modules=Object.assign({},cfg.moduleOpacity),groups=Object.assign({},cfg.groupOpacity);
+            for(const id of ids)modules[id]=Math.round(value*100)/100;
+            if(editScope==="group")groups[editId]=value;
+            else if(editScope==="all")for(const group of layoutGroups)groups[group.id]=value;
+            cfg.moduleOpacity=modules;cfg.groupOpacity=groups;
+        }
+        save();syncEditor();
+    }
+    function resetEditor(){
+        if(editMode!=="opacity"){
+            if(editScope==="all")cfg.moduleZoom=1;
+            else{const sizes=Object.assign({},cfg.moduleScale);for(const id of editorIds())delete sizes[id];cfg.moduleScale=sizes;}
+        }
+        if(editMode!=="size"){
+            const modules=Object.assign({},cfg.moduleOpacity),groups=Object.assign({},cfg.groupOpacity);
+            if(editScope==="all"){cfg.moduleOpacity=({});cfg.groupOpacity=({});}
+            else{for(const id of editorIds())delete modules[id];if(editScope==="group")delete groups[editId];cfg.moduleOpacity=modules;cfg.groupOpacity=groups;}
+        }
+        save();syncEditor();
+    }
+    function closeEditor(accept){if(!editOpen)return;editOpen=false;if(!accept)restoreAppearance(editBefore);editBefore=null;editTarget=null;ignoreClickUntil=Date.now()+300;}
+    Timer {interval:200;running:root.manipulating;repeat:true;onTriggered:{
+        if(root.dragItem&&(!root.dragItem.visible||!root.dragItem.hostWindow))root.cancelModuleDrag();
+        if(root.dragGroupId&&!root.bubblePanels.some(p=>p&&p.groupId===root.dragGroupId&&p.hostWindow===root.dragWindow&&p.visible))root.cancelModuleDrag();
+        if(root.editOpen&&(!root.editTarget||!root.editTarget.visible||!root.editScreen||!Quickshell.screens.includes(root.editScreen)))root.closeEditor(false);
+        if(root.dragWindow&&(!root.dragWindow.screen||!Quickshell.screens.includes(root.dragWindow.screen)))root.cancelModuleDrag();
+    }}
+    component PreciseRow:Item {
+        id:row;required property string field;readonly property alias control:valueSlider
+        function inputItem(){return entry;}
+        readonly property int minimum:field==="opacity"?40:50
+        readonly property int maximum:field==="opacity"?100:200
+        readonly property int current:Math.round(root.editorValue(field)*100)
+        width:parent.width;height:56;visible:root.editMode==="both"||root.editMode===field
+        Text {text:row.field==="opacity"?LocaleState.tr("Opacité","Opacity"):root.editScope==="all"?LocaleState.tr("Zoom global","Global zoom"):LocaleState.tr("Taille","Size");font.family:Theme.fontFamily;font.pixelSize:Theme.textSizeGroup;color:Theme.text}
+        Slider {id:valueSlider;y:20;width:parent.width-64;height:34;step:1/(row.maximum-row.minimum);displayFrom:row.minimum;displayTo:row.maximum
+            value:(row.current-row.minimum)/(row.maximum-row.minimum)
+            onMoved:value=>root.setEditorValue(row.field,(row.minimum+Math.round(value*(row.maximum-row.minimum)))/100)
+            onActiveFocusChanged:if(activeFocus)root.editField=row.field
+        }
+        Rectangle {x:parent.width-58;y:22;width:58;height:30;radius:Theme.radius;color:Theme.bgCard;border.width:1;border.color:entry.activeFocus?Theme.accent:Theme.border
+            TextInput {id:entry;anchors.fill:parent;anchors.margins:5;horizontalAlignment:TextInput.AlignHCenter;verticalAlignment:TextInput.AlignVCenter;color:Theme.text;selectionColor:Theme.accent;font.family:Theme.fontFamily;font.pixelSize:Theme.textSizeBody;selectByMouse:true
+                text:row.current.toString();validator:IntValidator{bottom:row.minimum;top:row.maximum}
+                onActiveFocusChanged:if(activeFocus){root.editField=row.field;selectAll();}
+                onEditingFinished:if(root.editOpen&&acceptableInput)root.setEditorValue(row.field,Number(text)/100)
+                onAccepted:if(acceptableInput)root.setEditorValue(row.field,Number(text)/100)
+            }
+        }
+    }
+    PanelWindow {
+        id:precisePanel;visible:root.editOpen;screen:root.editScreen||Quickshell.screens[0]
+        anchors{top:true;bottom:true;left:true;right:true}
+        color:"transparent";exclusionMode:ExclusionMode.Ignore
+        WlrLayershell.layer:WlrLayer.Overlay;WlrLayershell.namespace:"43pr-module-controls"
+        WlrLayershell.keyboardFocus:root.editOpen?WlrKeyboardFocus.Exclusive:WlrKeyboardFocus.None
+        readonly property real cardWidth:Math.min(screen?screen.width-16:360,360*cfg.scale)
+        readonly property real cardHeight:root.editMode==="both"?230:164
+        MouseArea {anchors.fill:parent;onClicked:root.closeEditor(true);onWheel:wheel=>{root.setEditorValue(root.editField,root.editorValue(root.editField)+wheel.angleDelta.y/120*0.01);wheel.accepted=true;}}
+        Rectangle {x:root.editPoint.x;y:root.editPoint.y;width:precisePanel.cardWidth;height:precisePanel.cardHeight;radius:Theme.radius;color:Theme.bg;border.width:1;border.color:Theme.accent
+            Keys.onPressed:event=>{if(event.key===Qt.Key_Escape){root.closeEditor(false);event.accepted=true;}else if(event.key===Qt.Key_Return||event.key===Qt.Key_Enter){root.closeEditor(true);event.accepted=true;}}
+            MouseArea {anchors.fill:parent;acceptedButtons:Qt.LeftButton|Qt.RightButton;onWheel:wheel=>{root.setEditorValue(root.editField,root.editorValue(root.editField)+wheel.angleDelta.y/120*0.01);wheel.accepted=true;}}
+            Column {anchors.fill:parent;anchors.margins:16;spacing:10
+                Text {text:root.editScope==="all"?LocaleState.tr("TOUS LES MODULES","ALL MODULES"):root.editScope==="group"?LocaleState.tr("BULLE","BUBBLE"):LocaleState.tr("MODULE","MODULE");font.family:Theme.fontFamily;font.bold:true;font.pixelSize:Theme.textSizeSection;color:Theme.text}
+                PreciseRow{id:preciseSize;field:"size"}
+                PreciseRow{id:preciseOpacity;field:"opacity"}
+                Row {spacing:8
+                    Repeater {id:editorActions;model:[LocaleState.tr("Rétablir","Reset"),LocaleState.tr("Annuler","Cancel"),LocaleState.tr("Valider","Apply")]
+                        Rectangle {required property int index;required property string modelData;width:(precisePanel.cardWidth-48)/3;height:30;radius:Theme.radius;color:Qt.alpha(Theme.accent,index===2?0.2:0.08);border.width:1;border.color:Theme.border
+                            Text{anchors.centerIn:parent;text:parent.modelData;color:Theme.text;font.family:Theme.fontFamily;font.pixelSize:Theme.textSizeBody}
+                            MouseArea{anchors.fill:parent;onClicked:{if(parent.index===0)root.resetEditor();else root.closeEditor(parent.index===2);}}
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     function moduleIsVertical(item) {
         let ancestor=item;
         while(ancestor) { if(ancestor.moduleSlotMarker===true)return ancestor.moduleVertical; ancestor=ancestor.parent; }
@@ -427,11 +558,14 @@ Scope {
         for(const slot of moduleSlots)if(slot&&slot.hostWindow===window){const p=slot.mapToItem(window.contentItem,slot.width/2,slot.height/2);modules[slot.modelData]={x:p.x,y:p.y};}
         dragTargets=panels;dragModuleTargets=modules;
     }
-    function rememberDrag() { dragModuleRotation=0;opacityGesture=false;dragMoved=false;dragSavedCells=cfg.groupCells;dragSavedRotations=cfg.groupRotations; }
+    property var dragSavedAppearance:null
+    function appearanceSnapshot(){return {moduleScale:cfg.moduleScale,moduleZoom:cfg.moduleZoom,moduleOpacity:cfg.moduleOpacity,groupOpacity:cfg.groupOpacity};}
+    function restoreAppearance(state){if(!state)return;for(const key of Object.keys(state))cfg[key]=state[key];save();}
+    function rememberDrag() {gestureMode="";discardReleaseClick=true;releaseClickTimer.stop();dragSavedAppearance=appearanceSnapshot(); dragModuleRotation=0;opacityGesture=false;dragMoved=false;dragSavedCells=cfg.groupCells;dragSavedRotations=cfg.groupRotations; }
     property double lastRotationAt:0
     function rotateDrag() {
-        if(!dragWindow || Date.now()-lastRotationAt<70)return;
-        lastRotationAt=Date.now();
+        if(!dragWindow || opacityGesture || Date.now()-lastRotationAt<70)return;
+        lastRotationAt=Date.now();gestureMode="move";
         if(dragItem){
             dragModuleRotation=(dragModuleRotation+1)%4;dragMoved=true;return;
         }
@@ -439,23 +573,29 @@ Scope {
         const result=BarLayout.rotateGroup(cfg,moduleIds,id,vertical);
         if(result){cfg.groupCells=result.groupCells;cfg.groupRotations=result.groupRotations;dragMoved=true;}
     }
+    function movingRect() {
+        if(dragItem)return {x:dragPoint.x-moduleGrip.x,y:dragPoint.y-moduleGrip.y,width:dragItem.width,height:dragItem.height};
+        const panel=bubblePanels.find(p=>p&&p.groupId===dragGroupId&&p.hostWindow===dragWindow);
+        return panel?{x:dragPoint.x-panel.width*dragGripRatio.x,y:dragPoint.y-panel.height*dragGripRatio.y,width:panel.width,height:panel.height}:null;
+    }
     function findMerge(sourceIds) {
-        mergePanel=null;mergeAnchor="";previewCells=({});
-        if(!cfg.autoGroup || !dragMoved)return;
-        for(const panel of bubblePanels) {
-            if(!panel || panel.hostWindow!==dragWindow || !panel.visible || panel.groupId===dragGroupId)continue;
-            const candidates=moduleSlots.filter(s=>s&&s.hostWindow===dragWindow&&panel.model.includes(s.modelData)&&!sourceIds.includes(s.modelData)&&s.visible);
-            if(!candidates.length)continue;
-            const live=panel.mapToItem(dragWindow.contentItem,0,0),saved=dragTargets[panel.groupId];
-            const inside=r=>r&&dragPoint.x>=r.x-12&&dragPoint.x<=r.x+r.width+12&&dragPoint.y>=r.y-12&&dragPoint.y<=r.y+r.height+12;
-            const original=inside(saved);
-            if(!original&&!inside({x:live.x,y:live.y,width:panel.width,height:panel.height}))continue;
-            mergePanel=panel;let distance=Infinity;
-            for(const other of candidates){const center=original&&dragModuleTargets[other.modelData]?dragModuleTargets[other.modelData]:other.mapToItem(dragWindow.contentItem,other.width/2,other.height/2),d=Math.hypot(dragPoint.x-center.x,dragPoint.y-center.y);
-                if(d<distance){distance=d;mergeAnchor=other.modelData;const dx=dragPoint.x-center.x,dy=dragPoint.y-center.y;mergeDirection=Math.abs(dx)>Math.abs(dy)?(dx<0?"left":"right"):(dy<0?"top":"bottom");}}
-            const result=dragGroupId?BarLayout.mergeGroups(cfg,moduleIds,dragGroupId,panel.groupId,mergeAnchor,mergeDirection,vertical):BarLayout.regroup(cfg,moduleIds,sourceIds[0],panel.groupId,0.5,undefined,mergeAnchor,mergeDirection,vertical);
-            previewCells=(result.groupCells||{})[panel.groupId]||{};return;
+        const previous=mergePanel?mergePanel.groupId:"";mergePanel=null;mergeAnchor="";previewCells=({});
+        if(!cfg.autoGroup||!dragMoved)return;
+        const moving=movingRect();if(!moving)return;
+        const targets=[];
+        for(const panel of bubblePanels){
+            if(!panel||panel.hostWindow!==dragWindow||!panel.visible||panel.groupId===dragGroupId)continue;
+            const slots=moduleSlots.filter(t=>t&&t.hostWindow===dragWindow&&panel.model.includes(t.modelData)&&!sourceIds.includes(t.modelData)&&t.visible);if(!slots.length)continue;
+            const r=dragTargets[panel.groupId];if(r)targets.push(Object.assign({id:panel.groupId,panel:panel,slots:slots},r));
         }
+        const target=BarLayout.placementTarget(moving,targets,previous);if(!target)return;
+        mergePanel=target.panel;let closest=null,distance=Infinity;
+        for(const slot of target.slots){const center=dragModuleTargets[slot.modelData]||slot.mapToItem(dragWindow.contentItem,slot.width/2,slot.height/2),d=Math.hypot(moving.x+moving.width/2-center.x,moving.y+moving.height/2-center.y);if(d<distance){distance=d;closest=slot;}}
+        if(!closest)return;mergeAnchor=closest.modelData;
+        const center=dragModuleTargets[closest.modelData]||closest.mapToItem(dragWindow.contentItem,closest.width/2,closest.height/2);
+        mergeDirection=BarLayout.insertionSide(moving,{x:center.x-closest.width/2,y:center.y-closest.height/2,width:closest.width,height:closest.height});
+        const result=dragGroupId?BarLayout.mergeGroups(cfg,moduleIds,dragGroupId,target.id,mergeAnchor,mergeDirection,vertical):BarLayout.regroup(cfg,moduleIds,sourceIds[0],target.id,0.5,undefined,mergeAnchor,mergeDirection,vertical);
+        previewCells=(result.groupCells||{})[target.id]||{};
     }
     function persistPositions(layout,window,positions,rename) {
         const state=Object.assign({},cfg,layout),all=BarLayout.groups(state,moduleIds),frame=window.layoutFrame;
@@ -482,7 +622,7 @@ Scope {
     property point groupOrigin: Qt.point(0,0)
     property double ignoreClickUntil: 0
     function beginModuleDrag(slot, point) {
-        if(!slot.hostWindow)return;
+        if(!slot.hostWindow||editOpen||dragItem||dragGroupId)return;
         for(const calendar of calendarControllers)if(calendar)calendar.calOpen=false;
         processPopup.close();if(notificationController)notificationController.panelOpen=false;
         if(powerController)powerController.closeMenu();if(volumeController)volumeController.closeAll();
@@ -493,17 +633,21 @@ Scope {
     function updateModuleDrag(slot,point) {
         if(dragItem!==slot || !dragWindow || opacityGesture)return;
         dragPoint=slot.mapToItem(dragWindow.contentItem,point.x,point.y);
-        if(Math.hypot(dragPoint.x-dragStart.x,dragPoint.y-dragStart.y)>6)dragMoved=true;
+        if(Math.hypot(dragPoint.x-dragStart.x,dragPoint.y-dragStart.y)>6){dragMoved=true;gestureMode="move";}
         if(dragMoved)findMerge([slot.modelData]);
     }
     function cancelModuleDrag(commit) {
+        if((dragItem||dragGroupId)&&nativeLeftHeld)closedNativeToken=nativeInputToken;
+        if(!nativeLeftHeld)releaseClickTimer.restart();
         if(dragItem || dragGroupId)ignoreClickUntil=Date.now()+250;
+        if(!commit)restoreAppearance(dragSavedAppearance);dragSavedAppearance=null;selectionOsdTimer.stop();
         if(!commit && dragSavedCells!==null){cfg.groupCells=dragSavedCells;cfg.groupRotations=dragSavedRotations;}
-        dragItem=null;dragGroupId="";dragWindow=null;mergePanel=null;previewCells=({});dragMoved=false;dragSavedCells=null;dragSavedRotations=null;dragTargets=({});dragModuleTargets=({});
+        dragItem=null;dragGroupId="";dragWindow=null;mergePanel=null;previewCells=({});dragMoved=false;gestureMode="";dragSavedCells=null;dragSavedRotations=null;dragTargets=({});dragModuleTargets=({});
     }
     function finishModuleDrag() {
         flushSelectionWheel();
-        if(!dragItem || !dragWindow || !dragMoved || opacityGesture){cancelModuleDrag();return;}
+        if(opacityGesture){cancelModuleDrag(true);return;}
+        if(!dragItem || !dragWindow || !dragMoved){cancelModuleDrag();return;}
         const item=dragItem,id=item.modelData,window=dragWindow,target=mergePanel;
         const sourceGroup=layoutGroups.find(g=>g.items.includes(id)),oldId=sourceGroup?sourceGroup.id:"";
         const solved=groupPositions(window,window.layoutFrame),newId=target?target.groupId:sourceGroup&&sourceGroup.items.length===1&&oldId.startsWith("free-")?oldId:"free-"+Date.now();
@@ -517,22 +661,23 @@ Scope {
         layoutPriority=newId;cancelModuleDrag(true);applyLayout(result);
     }
     function beginGroupDrag(panel,point) {
-        if(dragItem || dragGroupId)return;
+        if(dragItem || dragGroupId || editOpen)return;
         rememberDrag();dragWindow=panel.hostWindow;dragGroupId=panel.groupId;
         dragStart=panel.mapToItem(dragWindow.contentItem,point.x,point.y);dragPoint=dragStart;
-        recordDragTargets(dragWindow);groupOrigin=panel.mapToItem(dragWindow.contentItem,0,0);dragGrip=Qt.point(point.x,point.y);
+        recordDragTargets(dragWindow);groupOrigin=panel.mapToItem(dragWindow.contentItem,0,0);dragGrip=Qt.point(point.x,point.y);dragGripRatio=Qt.point(point.x/Math.max(1,panel.width),point.y/Math.max(1,panel.height));
         layoutPriority=panel.groupId;layoutAxis=vertical?"y":"x";processPopup.close();
     }
     function updateGroupDrag(panel,point) {
         if(dragGroupId!==panel.groupId || opacityGesture)return;
         dragPoint=panel.mapToItem(dragWindow.contentItem,point.x,point.y);
-        if(Math.hypot(dragPoint.x-dragStart.x,dragPoint.y-dragStart.y)>6)dragMoved=true;
+        if(Math.hypot(dragPoint.x-dragStart.x,dragPoint.y-dragStart.y)>6){dragMoved=true;gestureMode="move";}
         if(dragMoved)findMerge(panel.model);
     }
     function finishGroupDrag(panel) {
         flushSelectionWheel();
         if(dragGroupId!==panel.groupId)return;
-        if(!dragMoved||opacityGesture){cancelModuleDrag();return;}
+        if(opacityGesture){cancelModuleDrag(true);return;}
+        if(!dragMoved){cancelModuleDrag();return;}
         const window=dragWindow,id=dragGroupId,solved=groupPositions(window,window.layoutFrame);let result,rename={};
         if(mergePanel)result=BarLayout.mergeGroups(cfg,moduleIds,id,mergePanel.groupId,mergeAnchor,mergeDirection,vertical);
         else {result=BarLayout.relocate(cfg,moduleIds,id,0.5,undefined,undefined,vertical);const moved=result.moduleGroups[result.moduleGroups.length-1];rename[id]=moved.id;}
@@ -550,7 +695,8 @@ Scope {
             let x=group.x!==undefined?group.x*Math.max(0,frame.width-width):vertical?(cfg.position==="right"?frame.width-width:0):group.position*(frame.width-width);
             let y=group.y!==undefined?group.y*Math.max(0,frame.height-height):vertical?group.position*(frame.height-height):(cfg.position==="bottom"?frame.height-height:0);
             if(!cfg.freeLayout){x=vertical?0:group.position*(frame.width-width);y=vertical?group.position*(frame.height-height):0;}
-            if(group.id===dragGroupId && dragWindow===window && dragMoved){x=dragPoint.x-dragGrip.x-frame.x;y=dragPoint.y-dragGrip.y-frame.y;}
+            if(group.id===dragGroupId && dragWindow===window && dragMoved){x=dragPoint.x-width*dragGripRatio.x-frame.x;y=dragPoint.y-height*dragGripRatio.y-frame.y;}
+            if(cfg.freeLayout){const pad=BarLayout.edgePadding({x:x,y:y,width:width,height:height},frame.width,frame.height,effEdge,cfg.position);if(pad.edge==="left")x=effEdge;else if(pad.edge==="right")x=frame.width-width-effEdge;else if(pad.edge==="top")y=effEdge;else if(pad.edge==="bottom")y=frame.height-height-effEdge;}
             rectangles.push({id:group.id,x:x,y:y,width:width,height:height,order:vertical?(group.y===undefined?group.position:group.y):(group.x===undefined?group.position:group.x)});
         }
         if(dragItem && dragWindow===window && dragMoved && !mergePanel)rectangles.push({id:"__module-drag",x:dragPoint.x-moduleGrip.x-frame.x-root.bubblePadding,y:dragPoint.y-moduleGrip.y-frame.y-root.bubblePadding,width:dragItem.width+2*root.bubblePadding,height:dragItem.height+2*root.bubblePadding});
@@ -568,7 +714,7 @@ Scope {
     property bool barLive: true
 
     function rebuildBar() {
-        cancelModuleDrag();
+        if(editOpen)closeEditor(false);cancelModuleDrag();
         processPopup.close();
         if (notificationController) notificationController.panelOpen = false;
         // Retain the popup's parent surface until its close animation finishes.
@@ -594,10 +740,11 @@ Scope {
 
     IpcHandler {
         target: "bar"
-        function resetSizes():void {cfg.moduleScale=({});root.save();}
+        function setZoomPercent(percent:int):void{cfg.moduleZoom=Math.max(50,Math.min(200,percent))/100;root.save();}
+        function resetSizes():void {cfg.moduleScale=({});cfg.moduleZoom=1;root.save();}
         function resetOpacities():void {cfg.groupOpacity=({});cfg.moduleOpacity=({});root.save();}
         function layoutState(): string {
-            return JSON.stringify({moduleRotation:root.dragModuleRotation,moved:root.dragMoved,groupRotations:cfg.groupRotations,appDragging:root.appDragItem!==null,freeLayout:cfg.freeLayout,reserveSpace:cfg.reserveSpace,nativeReservation:root.nativeReservation,nativeControlBridge:root.nativeControlBridge,groupDrag:root.dragGroupId,mergeTarget:root.mergePanel?root.mergePanel.groupId:"",locale:LocaleState.language,date:LocaleState.locale.toString(new Date(),"dddd, d MMMM yyyy"),groups:root.layoutGroups,panels:root.bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>({id:p.groupId,selected:root.dragGroupId===p.groupId,border:p.border.width,opacity:root.groupAlpha(p.groupId),geometry:root.taskRect(p),items:p.model})),calendars:root.calendarControllers.filter(c => c && c.clockTarget).map(c => ({open:c.calOpen,geometry:root.taskRect(c.clockTarget)})),dragging:root.dragItem ? root.dragItem.modelData : "",
+            return JSON.stringify({gestureMode:root.gestureMode,moduleRotation:root.dragModuleRotation,moved:root.dragMoved,groupRotations:cfg.groupRotations,appDragging:root.appDragItem!==null,freeLayout:cfg.freeLayout,reserveSpace:cfg.reserveSpace,nativeReservation:root.nativeReservation,nativeControlBridge:root.nativeControlBridge,nativeInputBridge:root.nativeInputBridge,manipulating:root.manipulating,processPopupOpen:processPopup.opened,input:{discardClick:root.discardReleaseClick,kind:root.lastNativeKind,delta:root.lastNativeDelta,left:root.nativeLeftHeld,token:root.nativeInputToken},editor:{sizeInput:root.editorRect(preciseSize.inputItem()),opacityInput:root.editorRect(preciseOpacity.inputItem()),buttons:[0,1,2].map(i=>root.editorRect(editorActions.itemAt(i))),x:root.editPoint.x,y:root.editPoint.y,width:precisePanel.cardWidth,height:precisePanel.cardHeight,open:root.editOpen,scope:root.editScope,id:root.editId,mode:root.editMode,size:root.editorValue("size"),opacity:root.editorValue("opacity")},zoom:cfg.moduleZoom,groupDrag:root.dragGroupId,mergeTarget:root.mergePanel?root.mergePanel.groupId:"",locale:LocaleState.language,date:LocaleState.locale.toString(new Date(),"dddd, d MMMM yyyy"),groups:root.layoutGroups,panels:root.bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>({id:p.groupId,selected:root.dragGroupId===p.groupId,border:p.border.width,opacity:root.groupAlpha(p.groupId),geometry:root.taskRect(p),items:p.model})),calendars:root.calendarControllers.filter(c => c && c.clockTarget).map(c => ({open:c.calOpen,geometry:root.taskRect(c.clockTarget)})),dragging:root.dragItem ? root.dragItem.modelData : "",
                 modules:root.moduleSlots.filter(s => s && s.hostWindow).map(s => ({id:s.modelData,holding:s.holding,size:root.moduleFactor(s.modelData),pressed:s.item&&s.item.debugPressed!==undefined?s.item.debugPressed:false,hovered:s.item&&s.item.hovered!==undefined?s.item.hovered:false,itemSize:s.item?{width:s.item.width,height:s.item.height}:null,opacity:root.moduleAlpha(s.modelData),vertical:s.moduleVertical,geometry:root.taskRect(s)}))});
         }
         function nativeAppDrag(address:string,token:string):void {
@@ -910,7 +1057,7 @@ Scope {
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
             cursorShape: it.interactive && !it.disabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onPressed: mouse => { if(mouse.button===Qt.RightButton && (root.dragItem || root.dragGroupId))return; tipper.suppressed = true; tipper.shown = false;
+            onPressed: mouse => { if(root.manipulating)return;if(mouse.button===Qt.RightButton&&(mouse.modifiers&Qt.ControlModifier)){const slot=ma.slotParent();if(slot)root.openEditor(slot,false,"both");return;} tipper.suppressed = true; tipper.shown = false;
                 if(mouse.button===Qt.LeftButton && (mouse.modifiers & Qt.MetaModifier) && it.restoreDragEligible){preventStealing=true;root.beginAppDrag(it,Qt.point(mouse.x,mouse.y));}
             }
             function slotParent() { let p=it; while(p) { if (p.moduleSlotMarker === true) return p; p=p.parent; } return null; }
@@ -920,14 +1067,15 @@ Scope {
             }
             onPositionChanged: mouse => { if(root.appDragItem===it){root.updateAppDrag(it,Qt.point(mouse.x,mouse.y));return;} const slot=slotParent(); if (slot && root.dragItem === slot) root.updateModuleDrag(slot,ma.mapToItem(slot,mouse.x,mouse.y)); }
             onReleased: mouse => { if(mouse.button!==Qt.LeftButton)return; if(root.appDragItem===it&&!root.appDragNative)root.finishAppDrag(); if (root.dragItem === slotParent()) root.finishModuleDrag(); preventStealing=false; }
-            onCanceled: { if(root.appDragItem===it&&!root.appDragNative)root.appDragItem=null; if (root.dragItem === slotParent()) root.cancelModuleDrag(); preventStealing=false; }
+            onCanceled: { if(root.appDragItem===it&&!root.appDragNative)root.appDragItem=null; if (root.dragItem === slotParent()&&!root.nativeLeftHeld) root.cancelModuleDrag(); preventStealing=false; }
             onClicked: mouse => {
-                if (it.disabled || root.dragItem || root.appDragItem || Date.now() < root.ignoreClickUntil) return;
+                if (it.disabled || root.discardReleaseClick || root.manipulating || root.appDragItem || Date.now() < root.ignoreClickUntil) return;
                 if (mouse.button === Qt.LeftButton) it.primary();
                 else if (mouse.button === Qt.MiddleButton) it.tertiary();
-                else it.secondaryAction();
+                else if(!(mouse.modifiers&Qt.ControlModifier))it.secondaryAction();
             }
             onWheel: wheel => {
+                if(root.manipulating){if(!root.nativeInputBridge&&!root.editOpen)root.queueSelectionWheel(wheel.angleDelta.y,wheel.modifiers);wheel.accepted=true;return;}
                 if (pressedButtons & Qt.LeftButton) {
                     const slot=slotParent();if(slot&&!root.dragItem&&!root.dragGroupId)root.beginModuleDrag(slot,Qt.point(slot.width/2,slot.height/2));
                     wheel.accepted=root.queueSelectionWheel(wheel.angleDelta.y,wheel.modifiers);return;
@@ -940,7 +1088,7 @@ Scope {
         Tip {
             id: tipper
             target: it
-            hot: !it.noTip && ma.containsMouse
+            hot: !root.manipulating && !it.noTip && ma.containsMouse
             title: it.tip
             hints: it.hintText
         }
@@ -1037,7 +1185,7 @@ Scope {
         id: moduleSlot
         readonly property var hostWindow: QsWindow.window
         Component.onCompleted: root.moduleSlots = root.moduleSlots.filter(s => s && s.objectName !== undefined).concat([moduleSlot])
-        Component.onDestruction: { root.moduleSlots = root.moduleSlots.filter(s => s !== moduleSlot); if (root.dragItem === moduleSlot) root.cancelModuleDrag(); }
+        Component.onDestruction: { root.moduleSlots = root.moduleSlots.filter(s => s !== moduleSlot); if (root.dragItem === moduleSlot) root.cancelModuleDrag();if(root.editTarget===moduleSlot)root.closeEditor(false); }
         Behavior on x {enabled:root.dragItem!==null;NumberAnimation{duration:100}}
         Behavior on y {enabled:root.dragItem!==null;NumberAnimation{duration:100}}
         z: root.dragItem === moduleSlot ? 1000 : 0
@@ -1093,7 +1241,7 @@ Scope {
             return BarLayout.measure(cellMap,entries,0);
         }
         Component.onCompleted: root.bubblePanels=root.bubblePanels.filter(p=>p&&p.objectName!==undefined).concat([panel])
-        Component.onDestruction: root.bubblePanels=root.bubblePanels.filter(p=>p!==panel)
+        Component.onDestruction: {root.bubblePanels=root.bubblePanels.filter(p=>p!==panel);if(root.dragGroupId===panel.groupId&&root.dragWindow===panel.hostWindow)root.cancelModuleDrag();if(root.editTarget===panel)root.closeEditor(false);}
         visible: metrics.width>0 && metrics.height>0
         width: Math.max(rotatedVertical?root.panelThick:0,metrics.width+2*root.bubblePadding)
         height: Math.max(!rotatedVertical?root.panelThick:0,metrics.height+2*root.bubblePadding)
@@ -1108,12 +1256,12 @@ Scope {
             id:bubbleDrag;anchors.fill:parent;acceptedButtons:Qt.LeftButton|Qt.RightButton;pressAndHoldInterval:300
 
             property point pressedAt:Qt.point(0,0)
-            onPressed:mouse=>{if(mouse.button===Qt.RightButton){if(!root.dragGroupId&&!root.dragItem)root.openSettings();return;}pressedAt=Qt.point(mouse.x,mouse.y);}
+            onPressed:mouse=>{if(root.manipulating)return;if(mouse.button===Qt.RightButton){if(mouse.modifiers&Qt.ControlModifier)root.openEditor(panel,true,"both");else root.openSettings();return;}pressedAt=Qt.point(mouse.x,mouse.y);}
             onPressAndHold:mouse=>{if(mouse.button===Qt.LeftButton)root.beginGroupDrag(panel,Qt.point(mouse.x,mouse.y));}
             onPositionChanged:mouse=>{if(!(pressedButtons&Qt.LeftButton))return;if(!root.dragGroupId&&Math.hypot(mouse.x-pressedAt.x,mouse.y-pressedAt.y)>6)root.beginGroupDrag(panel,pressedAt);root.updateGroupDrag(panel,Qt.point(mouse.x,mouse.y));}
             onReleased:mouse=>{if(mouse.button===Qt.LeftButton)root.finishGroupDrag(panel);}
-            onCanceled:root.cancelModuleDrag()
-            onWheel:wheel=>{if(pressedButtons&Qt.LeftButton){if(!root.dragGroupId&&!root.dragItem)root.beginGroupDrag(panel,pressedAt);wheel.accepted=root.queueSelectionWheel(wheel.angleDelta.y,wheel.modifiers);}else wheel.accepted=false;}
+            onCanceled:if(!root.nativeLeftHeld)root.cancelModuleDrag()
+            onWheel:wheel=>{if(root.editOpen){wheel.accepted=true;return;}if(root.dragItem||root.dragGroupId){if(!root.nativeInputBridge)root.queueSelectionWheel(wheel.angleDelta.y,wheel.modifiers);wheel.accepted=true;return;}if(pressedButtons&Qt.LeftButton){if(!root.dragGroupId&&!root.dragItem)root.beginGroupDrag(panel,pressedAt);wheel.accepted=root.queueSelectionWheel(wheel.angleDelta.y,wheel.modifiers);}else wheel.accepted=false;}
         }
         Item {
             id:laneItem;anchors.centerIn:parent;width:panel.metrics.width;height:panel.metrics.height
@@ -1152,7 +1300,7 @@ Scope {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onClicked: ar.clicked()
+            onClicked:if(!root.manipulating&&!root.discardReleaseClick)ar.clicked()
         }
     }
 
@@ -1385,7 +1533,7 @@ Scope {
                             onReleased:mouse=>{if(mouse.button!==Qt.LeftButton)return;if(root.dragItem===workspaceModule.pressedSlot)root.finishModuleDrag();workspaceModule.pressedSlot=null;preventStealing=false;}
                             onCanceled:{if(root.dragItem===workspaceModule.pressedSlot)root.cancelModuleDrag();workspaceModule.pressedSlot=null;preventStealing=false;}
                             onClicked: mouse => {
-                                if(root.dragItem||root.dragGroupId||Date.now()<root.ignoreClickUntil)return;
+                                if(root.discardReleaseClick||root.manipulating||Date.now()<root.ignoreClickUntil)return;
                                 if (mouse.button === Qt.RightButton) root.openSettings();
                                 else Hyprland.dispatch("hl.dsp.focus({ workspace = " + dot.modelData.id + " })");
                             }
@@ -1405,7 +1553,7 @@ Scope {
             WheelHandler {
                 enabled: cfg.wsScroll
                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                onWheel: e => { if(workspaceModule.pressedSlot&&!root.dragItem&&!root.dragGroupId)root.beginModuleDrag(workspaceModule.pressedSlot,Qt.point(0,0)); if(root.dragItem || root.dragGroupId){root.queueSelectionWheel(e.angleDelta.y,e.modifiers);e.accepted=true;return;} root.run("hyprctl dispatch 'hl.dsp.focus({workspace=\"e"
+                onWheel: e => {if(root.manipulating){e.accepted=true;return;} if(workspaceModule.pressedSlot&&!root.dragItem&&!root.dragGroupId)root.beginModuleDrag(workspaceModule.pressedSlot,Qt.point(0,0)); if(root.dragItem || root.dragGroupId){root.queueSelectionWheel(e.angleDelta.y,e.modifiers);e.accepted=true;return;} root.run("hyprctl dispatch 'hl.dsp.focus({workspace=\"e"
                                        + (e.angleDelta.y > 0 ? "+1" : "-1") + "\"})'"); }
             }
         }
@@ -1562,12 +1710,13 @@ Scope {
                 contentWidth: taskModule.vertical ? width : appLane.implicitWidth
                 contentHeight: taskModule.vertical ? appLane.implicitHeight : height
                 clip: true
-                interactive: root.dragItem === null && root.appDragItem === null
+                interactive: !root.manipulating && root.appDragItem === null
                 boundsBehavior: Flickable.StopAtBounds
                 flickableDirection: taskModule.vertical ? Flickable.VerticalFlick : Flickable.HorizontalFlick
                 WheelHandler {
                     target: null
                     onWheel: event => {
+                        if(root.manipulating){event.accepted=true;return;}
                         const delta = (event.angleDelta.y || event.angleDelta.x) / 120 * (taskModule.slot + 2);
                         if (taskModule.vertical) appStrip.contentY = Math.max(0, Math.min(Math.max(0, appStrip.contentHeight - appStrip.height), appStrip.contentY - delta));
                         else appStrip.contentX = Math.max(0, Math.min(Math.max(0, appStrip.contentWidth - appStrip.width), appStrip.contentX - delta));
@@ -1740,6 +1889,7 @@ Scope {
 
         PanelWindow {
             id: bar
+            WlrLayershell.namespace:"43pr-bar"
             required property var modelData
             screen: modelData
             readonly property Item layoutFrame: frame

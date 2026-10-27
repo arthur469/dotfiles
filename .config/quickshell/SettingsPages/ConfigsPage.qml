@@ -67,14 +67,16 @@ Item {
 
     // Fixed binds hardcoded in keybinds.lua (display only, not editable)
     readonly property var fixedBinds: [
-        {id:"fx_component_opacity",label:LocaleState.tr("BARRE : OPACITÉ COMPOSANT / GROUPE","BAR: COMPONENT / GROUP OPACITY"),chord:LocaleState.tr("MAINTIEN GAUCHE + MOLETTE","HOLD LEFT + WHEEL")},
-        {id:"fx_component_size",label:LocaleState.tr("BARRE : TAILLE COMPOSANT / GROUPE","BAR: COMPONENT / GROUP SIZE"),chord:LocaleState.tr("MAINTIEN GAUCHE + CTRL + MOLETTE","HOLD LEFT + CTRL + WHEEL")},
+        {id:"fx_component_opacity",label:LocaleState.tr("BARRE : OPACITÉ GLOBALE","BAR: GLOBAL OPACITY"),chord:"SUPER + "+page.prettyKey("opacity")},
+        {id:"fx_component_opacity_target",label:LocaleState.tr("BARRE : OPACITÉ DE LA CIBLE","BAR: TARGET OPACITY"),chord:"SUPER + SHIFT + "+page.prettyKey("opacity")},
+        {id:"fx_component_settings",label:LocaleState.tr("BARRE : RÉGLAGES DE LA CIBLE","BAR: TARGET CONTROLS"),chord:LocaleState.tr("CTRL + CLIC DROIT","CTRL + RIGHT CLICK")},
+        {id:"fx_component_size",label:LocaleState.tr("BARRE : TAILLE DE LA CIBLE","BAR: TARGET SIZE"),chord:LocaleState.tr("MAINTIEN GAUCHE + MOLETTE","HOLD LEFT + WHEEL")},
         {id:"fx_component_rotate",label:LocaleState.tr("BARRE : PIVOTER LA SÉLECTION","BAR: ROTATE SELECTION"),chord:LocaleState.tr("MAINTIEN GAUCHE + CLIC DROIT","HOLD LEFT + RIGHT CLICK")},
         {id:"fx_carousel",label:LocaleState.tr("CARROUSEL DES FENÊTRES","WINDOW CAROUSEL"),chord:"SUPER + Tab"},
         {id:"fx_carousel_back",label:LocaleState.tr("CARROUSEL PRÉCÉDENT","PREVIOUS CAROUSEL ITEM"),chord:"SUPER + SHIFT + Tab"},
         {id:"fx_quick_switch",label:LocaleState.tr("BASCULE RAPIDE DES FENÊTRES","QUICK WINDOW SWITCH"),chord:"ALT + Tab"},
         {id:"fx_opacity_window",label:LocaleState.tr("OPACITÉ DE LA FENÊTRE","WINDOW OPACITY"),chord:"SUPER + SHIFT + "+page.prettyKey("opacity")},
-        {id:"fx_opacity_reset",label:LocaleState.tr("RÉTABLIR TOUTES LES OPACITÉS","RESET ALL WINDOW OPACITIES"),chord:"SUPER + CTRL + "+page.prettyKey("opacity")},
+        {id:"fx_opacity_reset",label:LocaleState.tr("RÉTABLIR LES OPACITÉS DES FENÊTRES","RESET WINDOW OPACITIES"),chord:"SUPER + CTRL + "+page.prettyKey("opacity")},
         {id:"fx_minimize",label:LocaleState.tr("RÉDUIRE LA FENÊTRE","MINIMIZE WINDOW"),chord:"SUPER + M"},
         {id:"fx_minimized",label:LocaleState.tr("AFFICHER LES FENÊTRES RÉDUITES","SHOW MINIMIZED WINDOWS"),chord:"SUPER + SHIFT + M"},
         {id:"fx_minimize_group",label:LocaleState.tr("GROUPE DES FENÊTRES RÉDUITES","MINIMIZED WINDOW GROUP"),chord:"SUPER + CTRL + M"},
@@ -235,7 +237,7 @@ Item {
         const key = cleanKey(raw, isNoSuper(id))
         if (!id || !key) return
         const proposed=(isNoSuper(id)?key:"SUPER + "+key);
-        const conflict=bindDefs.concat(fixedBinds).find(d=>d.id!==id&&!chordOf(d).includes("/")&&normalizeChord(chordOf(d))===normalizeChord(proposed));
+        const conflict=bindDefs.concat(fixedBinds).find(d=>d.id!==id&&!(id==="opacity"&&d.id==="fx_component_opacity")&&!chordOf(d).includes("/")&&normalizeChord(chordOf(d))===normalizeChord(proposed));
         if(conflict){captureHint=LocaleState.tr("Déjà utilisé : ","Already assigned: ")+conflict.label;return;}
         const next = Object.assign({}, bindKeys)
         next[id] = key
