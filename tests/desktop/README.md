@@ -1,0 +1,9 @@
+# Desktop controls regression
+
+- Run isolated checks: `node tests/desktop/test-sizes.cjs`, `node tests/desktop/test-lifecycle.cjs`, `node tests/desktop/test-legacy-migration.cjs`, `python3 tests/desktop/test-slider.py`, `python3 tests/desktop/test-components.py`, `python3 tests/desktop/test-surface.py`.
+- The renderer/component checks use the running Quickshell service runtime (override with `QS_TEST_BINARY`); component input and battery states are simulated off screen. Pillow and QtTest are required for these isolated checks.
+- Coordinate exclusive pointer/keyboard access before `python3 tests/desktop/regression.py --allow-desktop`. Requires the running native 43PR service, Hyprland, Kitty, a C compiler, Wayland and xkbcommon development headers.
+- The desktop matrix discovers enabled child input areas, clips scrolling content, and tests their centers plus every module's center/corners in four bar positions. It covers compact/default styles, collapsed/expanded Open apps and window groups, normal/minimized fixture windows, workspace scrolling on/off and clock formats. Every control must resize only its module and open its own opacity editor.
+- Global zoom normalizes every size; further checks cover cancellation and resizing outside the target. Missing physical battery states use the isolated component test. Hardware hot unplug and multiple physical displays are not asserted by this fixture.
+- Primary application actions are guarded while testing. Only fixture windows are moved or closed. Stable preferences, opacity files, pointer and focus are restored with Quickshell stopped for atomic restoration. Test baselines are rejected. Interrupted runs restore in `finally`.
+- Results and images are private, outside the source tree. `--start`, `--limit`, `--positions`, `--modules`, `--extras-only`, `--context-only` and `--matrix-only` select a diagnostic subset and do not constitute a full pass.

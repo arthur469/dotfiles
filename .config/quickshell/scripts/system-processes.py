@@ -16,6 +16,11 @@ def processes():
 
 def translated(fr,en):return fr if os.environ.get('LC_MESSAGES',os.environ.get('LANG','en')).lower().startswith('fr') else en
 
+def process_sort_key(row, sort='usage'):
+ if sort=='name':return (row['name'].casefold(),row['pid'])
+ if sort=='memory':return (-row.get('memory',0),-float(row.get('value') or 0),row['pid'])
+ return (-float(row.get('value') or 0),-row.get('memory',0),row['pid'])
+
 def group_processes(rows,kind,sort='usage',metadata=None,windows=None):
  metadata=metadata if metadata is not None else processes()
  if windows is None:
@@ -61,9 +66,9 @@ def group_processes(rows,kind,sort='usage',metadata=None,windows=None):
   group['identity']=next((r['identity'] for r in children if r['pid']==group['pid']),'')
   group['display']=(f"{group['value']:.1f} %" if group['value'] is not None else '—') if kind!='ram' else f"{group['value'] or 0:.0f} MiB"
   if kind=='gpu':group['display']+=f" · {group['memory']:.0f} MiB"
-  children.sort(key=lambda r: (r['name'].casefold(),r['pid']) if sort=='name' else (-float(r['value'] or 0),-r.get('memory',0),r['pid']))
+  children.sort(key=lambda r:process_sort_key(r,sort))
   result.append(group)
- result.sort(key=lambda g: (g['name'].casefold(),g['pid']) if sort=='name' else (-float(g['value'] or 0),-g['memory'],g['name']))
+ result.sort(key=lambda g:process_sort_key(g,sort))
  return result
 
 def snapshot(kind,sort="usage"):
@@ -80,7 +85,7 @@ def snapshot(kind,sort="usage"):
    try:name=(Path('/proc')/str(pid)/'comm').read_text().strip()
    except OSError:pass
    rows.append({'pid':pid,'name':name,'value':usage,'memory':memory,'display':('—' if usage is None else f'{usage:.0f}')+f' % · {memory:.0f} MiB'})
-  rows.sort(key=(lambda p:(p['name'].casefold(),p['pid'])) if sort=='name' else (lambda p:(-1 if p['value'] is None else p['value'],p['memory'])),reverse=sort!='name')
+  rows.sort(key=lambda p:process_sort_key(p,sort))
   return {'kind':kind,'processes':rows,'unit':'GPU · mémoire vidéo','error':''}
  first=processes();elapsed=time.monotonic()
  if kind=='cpu':time.sleep(.25)
@@ -98,7 +103,7 @@ def snapshot(kind,sort="usage"):
    except (OSError,ValueError):pass
    display=f'{value:.0f} MiB'
   rows.append({'pid':pid,'name':p['name'],'value':value,'memory':p['memory'],'display':display})
- rows.sort(key=(lambda p:(p['name'].casefold(),p['pid'])) if sort=='name' else (lambda p:(p['value'],p['memory'])),reverse=sort!='name')
+ rows.sort(key=lambda p:process_sort_key(p,sort))
  return {'kind':kind,'processes':rows,'unit':'100 % = un cœur' if kind=='cpu' else 'Mémoire proportionnelle (PSS), RSS si indisponible','error':''}
 def identity(pid):
  p=Path('/proc')/str(pid)
@@ -147,7 +152,7 @@ def stop_group(members,force=False):
   for fd in handles:os.close(fd)
 
 if __name__=='__main__':
- p=argparse.ArgumentParser();group=p.add_mutually_exclusive_group(required=True);group.add_argument('--kind',choices=['cpu','ram','gpu']);group.add_argument('--stop-pid',type=int);group.add_argument('--stop-group');p.add_argument('--identity');p.add_argument('--force',action='store_true');p.add_argument('--sort',choices=['usage','name'],default='usage');p.add_argument('--language');a=p.parse_args()
+ p=argparse.ArgumentParser();group=p.add_mutually_exclusive_group(required=True);group.add_argument('--kind',choices=['cpu','ram','gpu']);group.add_argument('--stop-pid',type=int);group.add_argument('--stop-group');p.add_argument('--identity');p.add_argument('--force',action='store_true');p.add_argument('--sort',choices=['usage','memory','name'],default='usage');p.add_argument('--language');a=p.parse_args()
  if a.language:os.environ['LC_MESSAGES']=a.language
  try:
   if a.stop_group is not None:

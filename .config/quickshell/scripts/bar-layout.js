@@ -164,8 +164,8 @@ function snap(rect,others,width,height,threshold) {
 }
 
 // Scale a selection proportionally, preserving each component's own size.
-function resizeModules(values,ids,delta) {
-    const output=Object.assign({},values||{}),factor=id=>typeof output[id]==="number"?Math.max(0.5,Math.min(2,output[id])):1;
+function resizeModules(values,ids,delta,base) {
+    const output=Object.assign({},values||{}),factor=id=>typeof output[id]==="number"?Math.max(0.5,Math.min(2,output[id])):(typeof base==="number"?base:1);
     if(!ids.length)return {values:output,average:1};
     const before=ids.map(factor),average=before.reduce((sum,x)=>sum+x,0)/ids.length;
     const lower=Math.max(...before.map(x=>0.5/x)),upper=Math.min(...before.map(x=>2/x));
@@ -192,4 +192,17 @@ function placementTarget(rect,targets,previous) {
 function insertionSide(rect,anchor) {
     const dx=rect.x+rect.width/2-anchor.x-anchor.width/2,dy=rect.y+rect.height/2-anchor.y-anchor.height/2;
     return Math.abs(dx)/Math.max(1,anchor.width)>Math.abs(dy)/Math.max(1,anchor.height)?(dx<0?"left":"right"):(dy<0?"top":"bottom");
+}
+
+// Absolute per-module values; a global adjustment replaces every override.
+function moduleScale(state,id) {
+    const value=(state.moduleScale||{})[id];
+    return Math.max(0.5,Math.min(2,typeof value==="number"?value:(state.moduleZoom||1)));
+}
+function uniformScale(value) { return {moduleZoom:Math.round(Math.max(0.5,Math.min(2,value))*100)/100,moduleScale:{},moduleScaleVersion:2}; }
+function migrateScales(state) {
+    if((state.moduleScaleVersion||1)>=2)return {};
+    const next={},zoom=state.moduleZoom||1;
+    for(const id in (state.moduleScale||{}))next[id]=Math.max(0.5,Math.min(2,state.moduleScale[id]*zoom));
+    return {moduleScale:next,moduleScaleVersion:2};
 }

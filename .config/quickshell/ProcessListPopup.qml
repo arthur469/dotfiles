@@ -35,8 +35,12 @@ Scope {
         return {x:popup.point.x+p.x,y:popup.point.y+p.y,width:item.width,height:item.height};
     }
     function changeSort() {
-        sortMode=sortMode === "name" ? "usage" : "name";
-        const compare=(a,b)=>sortMode==="name" ? a.name.localeCompare(b.name)||a.pid-b.pid : (b.value||0)-(a.value||0)||b.memory-a.memory;
+        setSort(sortMode === "name" ? "usage" : sortMode === "usage" && kind === "gpu" ? "memory" : "name");
+    }
+    function setSort(mode) {
+        if (!["usage","name"].concat(kind === "gpu" ? ["memory"] : []).includes(mode)) return;
+        sortMode=mode;
+        const compare=(a,b)=>sortMode==="name" ? a.name.toLowerCase().localeCompare(b.name.toLowerCase())||a.pid-b.pid : sortMode==="memory" ? b.memory-a.memory||(b.value||0)-(a.value||0)||a.pid-b.pid : (b.value||0)-(a.value||0)||b.memory-a.memory||a.pid-b.pid;
         groups=groups.slice().sort(compare).map(g=>Object.assign({},g,{children:g.children.slice().sort(compare)}));
         if(!frozen)refresh();
     }
@@ -74,6 +78,7 @@ Scope {
         const next = type.toLowerCase();
         if (opened && target === item && kind === next) { close(); return; }
         target = item; kind = next; hovered = false; pending = null;pendingAnchor=null;canForce = false;
+        if (kind !== "gpu" && sortMode === "memory") sortMode = "usage";
         processes = [];groups=[];expanded=({});processList.contentY=0;error = "";opened = true;refresh();
     }
     function refresh() {
@@ -127,12 +132,12 @@ Scope {
                     spacing: 8
                     Repeater {
                         id: toolRepeater
-                        model: [{label:root.sortMode === "name" ? LocaleState.tr("Nom A → Z","Name A → Z") : LocaleState.tr("Consommation ↓","Usage ↓"), action:"sort"}]
+                        model: [{mode:"usage",label:LocaleState.tr("Consommation ↓","Usage ↓")}].concat(root.kind === "gpu" ? [{mode:"memory",label:"VRAM ↓"}] : []).concat([{mode:"name",label:LocaleState.tr("Nom A → Z","Name A → Z")}])
                         delegate: Rectangle {
                             required property var modelData
-                            width: 150; height: 26; radius: Theme.radius; color: Qt.alpha(Theme.text, 0.08)
+                            width: Math.min(150, (popup.width - 44) / (root.kind === "gpu" ? 3 : 2)); height: 26; radius: Theme.radius; color: Qt.alpha(Theme.text, root.sortMode === modelData.mode ? 0.2 : 0.08)
                             Text { anchors.centerIn: parent; text: modelData.label; color: Theme.text; font.pixelSize: 11 }
-                            MouseArea { anchors.fill: parent; onClicked: root.changeSort() }
+                            MouseArea { anchors.fill: parent; onClicked: root.setSort(modelData.mode) }
                         }
                     }
                 }

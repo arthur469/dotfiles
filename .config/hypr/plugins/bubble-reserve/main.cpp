@@ -2,6 +2,7 @@
 #include <hyprland/src/layout/target/WindowTarget.hpp>
 #include <hyprland/src/layout/space/Space.hpp>
 #include <set>
+#include <chrono>
 #include <sstream>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
@@ -28,7 +29,9 @@ CHyprSignalListener buttonListener;
 CHyprSignalListener axisListener,moveListener,keyListener;
 std::set<uint32_t> swallowedKeys,swallowedButtons;
 bool candidate=false,rightSwallowed=false,interactive=true,modal=false,cancelledGesture=false;
-Vector2D pressPoint;
+Vector2D pressPoint,lastMovePoint;
+std::chrono::steady_clock::time_point lastMoveTime;
+bool moveEmitted=false;
 uint32_t pressToken=0;
 std::vector<BubbleReserve::Rect> inputRegions;
 bool leftHeld=false;
@@ -44,7 +47,7 @@ xkb_keysym_t opacitySymbol=XKB_KEY_o;
 void readState() {
     std::error_code error;
     const auto stamp=std::filesystem::last_write_time(statePath,error);
-    if(error){enabled=false;obstacles.clear();inputRegions.clear();interactive=false;modal=false;candidate=false;return;}
+    if(error){enabled=false;obstacles.clear();inputRegions.clear();interactive=false;modal=false;return;}
     if(stamp==stateStamp)return;
     stateStamp=stamp;obstacles.clear();inputRegions.clear();enabled=false;interactive=false;
     if(std::filesystem::file_size(statePath,error)>65536 || error)return;
@@ -131,18 +134,28 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE pluginHandle) {
         std::ostringstream data;data<<kind<<","<<pressToken<<","<<pressPoint.x<<","<<pressPoint.y<<","<<value;
         g_pEventManager->postEvent({"43pr_bubble_input",data.str()});
     };
+    auto emitMove=[](bool force=false) {
+        if(!leftHeld||!candidate||!g_pInputManager)return;
+        const auto point=g_pInputManager->getMouseCoordsInternal();
+        const auto now=std::chrono::steady_clock::now();
+        if(moveEmitted && point==lastMovePoint)return;
+        if(!force && moveEmitted && now-lastMoveTime<std::chrono::milliseconds(16))return;
+        std::ostringstream data;data<<"move,"<<pressToken<<","<<point.x<<","<<point.y<<",0";
+        g_pEventManager->postEvent({"43pr_bubble_input",data.str()});
+        lastMovePoint=point;lastMoveTime=now;moveEmitted=true;
+    };
     auto hit=[](Vector2D point){const auto focused=g_pSeatManager->m_state.pointerFocus.lock();if(!focused)return false;const auto surface=Desktop::View::CWLSurface::fromResource(focused);const auto layer=surface?Desktop::View::CLayerSurface::fromView(surface->view()):nullptr;return layer&&layer->m_namespace=="43pr-bar";};
     auto inEditor=[](){const auto focused=g_pSeatManager->m_state.pointerFocus.lock();if(!focused)return false;const auto surface=Desktop::View::CWLSurface::fromResource(focused);const auto layer=surface?Desktop::View::CLayerSurface::fromView(surface->view()):nullptr;return layer&&layer->m_namespace=="43pr-module-controls";};
-    buttonListener=Event::bus()->m_events.input.mouse.button.listen([emit,hit,inEditor](IPointer::SButtonEvent event,Event::SCallbackInfo& info) {
+    buttonListener=Event::bus()->m_events.input.mouse.button.listen([emit,emitMove,hit,inEditor](IPointer::SButtonEvent event,Event::SCallbackInfo& info) {
         readState();if(!g_pInputManager)return;
-        if(event.button==BTN_LEFT&&event.state==WL_POINTER_BUTTON_STATE_RELEASED){leftHeld=false;if(candidate||cancelledGesture)emit("release");candidate=false;cancelledGesture=false;}
+        if(event.button==BTN_LEFT&&event.state==WL_POINTER_BUTTON_STATE_RELEASED){emitMove(true);leftHeld=false;if(candidate||cancelledGesture)emit("release");candidate=false;cancelledGesture=false;}
         if(event.state==WL_POINTER_BUTTON_STATE_RELEASED&&swallowedButtons.erase(event.button)){info.cancelled=true;return;}
         if(modalActive()&&!inEditor()&&event.state==WL_POINTER_BUTTON_STATE_PRESSED){swallowedButtons.insert(event.button);info.cancelled=true;return;}
         if(leftHeld&&(candidate||cancelledGesture)&&event.state==WL_POINTER_BUTTON_STATE_PRESSED&&event.button!=BTN_LEFT&&event.button!=BTN_RIGHT){swallowedButtons.insert(event.button);info.cancelled=true;return;}
         const auto point=g_pInputManager->getMouseCoordsInternal();const auto mods=g_pInputManager->getModsFromAllKBs();
         if(event.button==BTN_LEFT) {
             leftHeld=event.state==WL_POINTER_BUTTON_STATE_PRESSED;
-            if(leftHeld){cancelledGesture=false;candidate=hit(point)&&!(mods&64);pressPoint=point;pressToken=event.timeMs;if(candidate)emit("press");}
+            if(leftHeld){moveEmitted=false;cancelledGesture=false;candidate=hit(point)&&!(mods&64);pressPoint=point;pressToken=event.timeMs;if(candidate)emit("press");}
             else {if(candidate||cancelledGesture)emit("release");candidate=false;cancelledGesture=false;}
         }
         if(event.button==BTN_RIGHT) {
@@ -159,11 +172,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE pluginHandle) {
         if(event.axis==WL_POINTER_AXIS_VERTICAL_SCROLL)emit("wheel",event.deltaDiscrete?-event.deltaDiscrete:-event.delta*8.0);
         info.cancelled=true;
     });
-    moveListener=Event::bus()->m_events.input.mouse.move.listen([](Vector2D,Event::SCallbackInfo&) {
-        if(!leftHeld||!candidate||!g_pInputManager)return;
-        const auto point=g_pInputManager->getMouseCoordsInternal();std::ostringstream data;
-        data<<"move,"<<pressToken<<","<<point.x<<","<<point.y<<",0";g_pEventManager->postEvent({"43pr_bubble_input",data.str()});
-    });
+    // Keep high polling rate mice from flooding every IPC subscriber. The final
+    // position is emitted before release, even when inside the rate limit.
+    moveListener=Event::bus()->m_events.input.mouse.move.listen([emitMove](Vector2D,Event::SCallbackInfo&) {emitMove();});
     keyListener=Event::bus()->m_events.input.keyboard.key.listen([emit,hit](IKeyboard::SKeyEvent event,Event::SCallbackInfo& info) {
         if(event.state==WL_KEYBOARD_KEY_STATE_RELEASED){if(swallowedKeys.erase(event.keycode))info.cancelled=true;return;}
         if(!g_pInputManager)return;
@@ -183,6 +194,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE pluginHandle) {
         pressPoint=point;pressToken=event.timeMs;emit((mods&1)?"opacity-target":"opacity-all");
         swallowedKeys.insert(event.keycode);info.cancelled=true;
     });
-    return {"43pr-bubble-reserve","Reserve bubble space while keeping the native layout","43PR personal extensions","0.3.0"};
+    return {"43pr-bubble-reserve","Reserve bubble space while keeping the native layout","43PR personal extensions","0.3.1"};
 }
 APICALL EXPORT void PLUGIN_EXIT(){keyListener.reset();moveListener.reset();axisListener.reset();buttonListener.reset();candidate=false;swallowedKeys.clear();swallowedButtons.clear();leftHeld=false;if(hook)hook->unhook();enabled=false;obstacles.clear();refresh();}

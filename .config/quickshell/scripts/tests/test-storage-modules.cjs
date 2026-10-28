@@ -1,0 +1,12 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const api=vm.createContext({});vm.runInContext(fs.readFileSync(require('path').join(__dirname,'../storage-modules.js'),'utf8').replace('.pragma library',''),api);
+const state={diskVolumes:['uuid:one','uuid:two'],position:'left',startMods:'cpu',centerMods:'clock',endMods:'',moduleGroups:[{id:'free-user',x:.2,y:.3,items:['ram','disk','gpu']}],groupCells:{'free-user':{ram:{x:0,y:0},disk:{x:0,y:1},gpu:{x:0,y:2}}},moduleScale:{disk:1.3,cpu:1},moduleOpacity:{disk:.7},hidden:'disk,wall'};
+const before=JSON.stringify(state),ids=state.diskVolumes.map(api.moduleId),patch=api.migrate(state),upgraded={...state,...patch};
+assert.equal(JSON.stringify(state),before);assert.deepEqual(Array.from(upgraded.moduleGroups[0].items),['ram',...ids,'gpu']);assert.equal(upgraded.moduleGroups[0].x,.2);
+assert.equal(upgraded.groupCells['free-user'][ids[1]].y,2);assert.equal(upgraded.groupCells['free-user'].gpu.y,3);
+assert.equal(upgraded.moduleScale[ids[0]],1.3);assert.equal(upgraded.moduleOpacity[ids[1]],.7);assert(upgraded.hidden.includes(ids[1]));assert(!upgraded.moduleScale.disk);
+assert.equal(Object.keys(api.migrate(upgraded)).length,0);
+const weird='device:/dev/some, name';assert.equal(api.volumeId(api.moduleId(weird)),weird);assert(!api.moduleId(weird).includes(','));
+const rotated=api.migrate({...state,groupRotations:{'free-user':1},groupCells:{'free-user':{disk:{x:1,y:0},gpu:{x:2,y:0}}}});assert.equal(rotated.groupCells['free-user'][ids[1]].x,2);assert.equal(rotated.groupCells['free-user'].gpu.x,3);
+const placed=api.migrate({...state,endMods:ids[1]});assert.equal(placed.moduleGroups[0].items.filter(x=>x===ids[1]).length,0);
+console.log('PASS: legacy placement, rotated cells, size/opacity/visibility, idempotence, stable escaping, no duplicate placements');

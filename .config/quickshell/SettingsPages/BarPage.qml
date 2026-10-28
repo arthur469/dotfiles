@@ -1,5 +1,6 @@
 import QtQuick
 import "../scripts/bar-layout.js" as BarLayout
+import "../scripts/storage-modules.js" as StorageModules
 import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
@@ -23,11 +24,11 @@ Item {
 
     readonly property var defaults: ({
         position: "left", style: "joined", thickness: 20, margin: 4,
-        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), groupRotations: ({}), groupOpacity: ({}), moduleOpacity: ({}), moduleScale: ({}), moduleZoom:1, autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
+        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), groupRotations: ({}), groupOpacity: ({}), moduleOpacity: ({}), moduleScale: ({}), moduleZoom:1, moduleScaleVersion:2, autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
         scale: 1.0, bgOpacity: 0.5, border: false, radius: 16, calRadius: 15,
         tooltips: true, tooltipHints: true, tipDelay: 450,
         modPad: 20, wsDot: 10, wsGap: 8, wsScroll: true,
-        statsMode: "compact", statsWarn: 85, statsGpu: true, batLowPct: 15,
+        statsMode: "compact", statsWarn: 85, statsGpu: true, diskVolumes: [], batLowPct: 15,
         volStep: 2, volMax: 100,
         clock24: true, clockSeconds: false, weekMonday: true,
         tasksCollapsed: false, taskIconSize: 18, taskMaxVisible: 5, moduleGroups: [],
@@ -58,7 +59,7 @@ Item {
         { id: "wall",     l: "WALLPAPERS" },
         { id: "settings", l: "SETTINGS" },
         { id: "power",    l: "POWER", fixed: true }
-    ].concat(page.val("windowGroupsEnabled") ? page.val("windowGroups").map(g=>({id:"minigroup-"+g.id,l:g.name})) : [])
+    ].concat(DiskStats.modules(page.val("diskVolumes"))).concat(page.val("windowGroupsEnabled") ? page.val("windowGroups").map(g=>({id:"minigroup-"+g.id,l:g.name})) : [])
     readonly property var moduleIds: moduleDefs.map(d => d.id)
 
     // values changed from their defaults (reassigned on every change so bindings update)
@@ -73,8 +74,17 @@ Item {
         setMany(o)
     }
 
+    readonly property var diskChoices:DiskStats.choices(page.val("diskVolumes"))
+    function selectDisk(id, selected) {
+        const ids=page.val("diskVolumes").filter(value=>value!==id);
+        if(selected)ids.push(id);
+        const hidden=csv(page.val("hidden")).filter(value=>value!==StorageModules.moduleId(id));
+        page.setMany({diskVolumes:ids,hidden:hidden.join(",")});
+    }
+
     function setMany(o) {
-        s = Object.assign({}, s, o)
+        const next=Object.assign({},page.defaults,s,o);
+        s=Object.assign({},s,o,StorageModules.migrate(next))
         saveTimer.restart()
     }
 
@@ -141,7 +151,7 @@ Item {
             const o = {}
             for (const k in defaults)
                 if (j[k] !== undefined && typeof j[k] === typeof defaults[k]) o[k] = j[k]
-            s = o
+            s = Object.assign({},o,StorageModules.upgrade(Object.assign({},defaults,o,{moduleScaleVersion:j.moduleScaleVersion??1}),BarLayout.migrateScales))
         } catch (error) {}
     }
 
@@ -638,6 +648,16 @@ Item {
                 Card {
                     Column {
                         width: parent.width; spacing: 4
+                        GroupLabel {text:LocaleState.tr("DISQUES","DISKS")}
+                        Repeater {
+                            model:page.diskChoices
+                            delegate:ToggleRow {
+                                required property var modelData
+                                label:modelData.label + " · " + (modelData.mount || modelData.device || modelData.id)
+                                checked:page.val("diskVolumes").includes(modelData.id)
+                                onToggled:v=>page.selectDisk(modelData.id,v)
+                            }
+                        }
                         Repeater {
                             model: page.moduleDefs
                             delegate: Column {

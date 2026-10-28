@@ -204,8 +204,8 @@ Item {
             anchors.margins: -6
             preventStealing: true
 
-            onPressed: (mouse) => {root.forceActiveFocus();root.setFromRatio(mouse.x / track.width)}
-            onPositionChanged: (mouse) => { if (pressed) root.setFromRatio(mouse.x / track.width) }
+            onPressed: (mouse) => {root.forceActiveFocus();root.setFromRatio(track.mapFromItem(dragArea,mouse.x,mouse.y).x / Math.max(1,track.width))}
+            onPositionChanged: (mouse) => { if (pressed) root.setFromRatio(track.mapFromItem(dragArea,mouse.x,mouse.y).x / Math.max(1,track.width)) }
             onReleased: root.committed(root.value)
             onWheel:wheel=>{root.nudge(wheel.angleDelta.y);wheel.accepted=true;}
         }

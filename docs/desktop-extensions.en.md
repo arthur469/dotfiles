@@ -32,7 +32,7 @@ The Terminal ASCII wallpaper is rendered from Odysseus's existing effect into a 
 For Quickshell 0.3.2 startup before BlueZ, `scripts/wait-bluetooth.py` provides a bounded eight-second readiness wait without powering hardware. A user unit can use `ExecStartPre=/usr/bin/python3 %h/.config/quickshell/scripts/wait-bluetooth.py`. A later BlueZ restart can still require restarting Quickshell. Existing upstream report: https://github.com/quickshell-mirror/quickshell/issues/1201.
 
 
-Hold left-click and **wheel**, without Ctrl, to resize an individual component from 50 to 200%, in 5% steps. A group preserves relative sizes. Display groups Brightness, Module zoom and Workspace opacity in one card, using the same row component and an icon for every control. Common zoom ranges from 50 to 200%, in addition to individual sizes; its icon resets 100%. No zoom module is added to the bar. Existing text scale remains separate. Input geometry, popup anchors and reserved space follow the result, while Open apps retains scrolling when its visible length is reduced. `qs ipc call bar resetSizes` resets both individual sizes and common zoom.
+Hold left-click and **wheel**, without Ctrl, to resize an individual component from 50 to 200%, in 5% steps. A group preserves relative sizes. Display groups Brightness, Module zoom and Workspace opacity in one card, using the same row component and an icon for every control. Common zoom ranges from 50 to 200% and replaces every individual size override; its icon restores every module to 100%. No zoom module is added to the bar. Existing text scale remains separate. Input geometry, popup anchors and reserved space follow the result, while Open apps retains scrolling when its visible length is reduced. `qs ipc call bar resetSizes` resets both individual sizes and common zoom.
 
 Standalone symbols share a 16-logical-pixel reference square at normal bar scale. Their painted bounds are proportionally fitted and centred in each button, including supplementary Unicode glyphs; individual module scaling is applied afterwards. The notification count stays in a separate corner badge. Rotating a module from its contents preserves its orientation on release and the cursor grip; input rectangles follow free positions.
 
@@ -51,3 +51,19 @@ An active manipulation owns input until release: scrolling continues to resize t
 Day mode resumes the selected video and recovers a missing player. The same native mpvpaper engine runs in a separate transient user unit, 43pr-wallpaper-player.service, so restarting Quickshell does not terminate it. Native visibility auto-pause remains permitted; night mode forces pause. Static wallpapers stay static. A missing selected video or failed player startup is reported instead of returning an unverified success.
 
 The three dots above settings are snap buttons; dragging the free handle area moves the window. Maintenance checks cover that handle, contextual keys, fullscreen opacity and the wallpaper night/day cycle. Interactive test layouts must be captured from a stable baseline, restored with Quickshell stopped, and verified afterwards; test profiles must never be consolidated into an image.
+# Storage and video memory — 28 October 2026
+
+Settings → Bar → Modules → Disks selects zero, one or several filesystem volumes. Each selected volume has a used-space indicator and a tooltip showing used, total and available capacity. Btrfs subvolumes sharing a filesystem are counted once. Unmounted or missing volumes remain selected and show an unavailable value; the bar never mounts a disk. Clicking opens the existing bar settings. Sizes, gestures and opacity use the standard module mechanisms.
+
+The GPU process panel offers Usage ↓, VRAM ↓ and Name A → Z. VRAM sorting orders applications by their total video memory and child processes by individual video memory. Unknown GPU activity does not prevent sorting known video-memory usage. Changing the sort order never stops a process.
+
+
+
+Storage badges share the CPU/RAM/GPU resource component and compact/default styles (number without a percent sign). Each selected filesystem is a distinct module: move, resize, hide or regroup it into bubbles independently. Settings discover filesystems dynamically; absent selected volumes stay selected and show an unavailable value without mounting them. Legacy aggregate placement and appearance migrate automatically. Personal filesystem identities are excluded from the clean image.
+
+
+Shared module controls
+
+- Hold left-click and wheel targets the module from both its content and padding; outer background targets the bubble.
+- 100% opacity paints an opaque background. Module and bubble values remain independent.
+- Interactive regression: `tests/desktop/regression.py --allow-desktop`; captures/restores preferences and iterates input regions across all four bar positions. Coordinate with the user before running it.

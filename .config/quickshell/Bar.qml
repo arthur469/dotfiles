@@ -1,5 +1,6 @@
 import QtQuick
 import "scripts/bar-layout.js" as BarLayout
+import "scripts/storage-modules.js" as StorageModules
 import QtQuick.Layouts
 import QtQuick.Effects
 import Quickshell
@@ -22,14 +23,14 @@ Scope {
     readonly property var defaults: ({
         // layout
         position: "left", style: "joined", thickness: 20, margin: 4,
-        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), groupRotations: ({}), groupOpacity: ({}), moduleOpacity: ({}), moduleScale: ({}), moduleZoom:1, autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
+        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), groupRotations: ({}), groupOpacity: ({}), moduleOpacity: ({}), moduleScale: ({}), moduleZoom:1, moduleScaleVersion:2, autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
         // appearance
         scale: 1.0, bgOpacity: 0.5, border: false, radius: 16, calRadius: 15,
         // tooltips
         tooltips: true, tooltipHints: true, tipDelay: 450,
         // modules
         modPad: 20, wsDot: 10, wsGap: 8, wsScroll: true,
-        statsMode: "compact", statsWarn: 85, statsGpu: true, batLowPct: 15,
+        statsMode: "compact", statsWarn: 85, statsGpu: true, diskVolumes: [], batLowPct: 15,
         volStep: 2, volMax: 100,
         // clock / calendar
         clock24: true, clockSeconds: false, weekMonday: true,
@@ -56,6 +57,7 @@ Scope {
         printErrors: false
         watchChanges: true                 // BarPage writes this file; pick its changes up live
         onFileChanged: reload()
+        onLoaded: root.migrateDisks()
         onLoadFailed: error => { if (error === FileViewError.FileNotFound) writeAdapter(); }
 
         adapter: JsonAdapter {
@@ -74,6 +76,7 @@ Scope {
             property var groupOpacity: root.defaults.groupOpacity
             property var moduleOpacity: root.defaults.moduleOpacity
             property var moduleScale:root.defaults.moduleScale
+            property int moduleScaleVersion:1 // Missing field marks the old multiplicative format.
             property real moduleZoom:root.defaults.moduleZoom
             property bool autoGroup: root.defaults.autoGroup
             property bool quickFloatRetile: root.defaults.quickFloatRetile
@@ -93,6 +96,7 @@ Scope {
             property bool wsScroll: root.defaults.wsScroll       // scroll on workspaces to switch
             property string statsMode: root.defaults.statsMode   // "default" | "compact"
             property bool statsGpu: root.defaults.statsGpu
+            property var diskVolumes: root.defaults.diskVolumes
             property int statsWarn: root.defaults.statsWarn      // CPU/RAM % that turns red
             property int batLowPct: root.defaults.batLowPct      // battery % that turns red
             property int volStep: root.defaults.volStep          // % per scroll notch
@@ -112,8 +116,16 @@ Scope {
     }
 
     // Only the bar's own changes (IPC) are saved from here; BarPage saves its own.
-    Timer { id: saveTimer; interval: 300; onTriggered: cfgFile.writeAdapter() }
+    // FileView applies its asynchronous write snapshot back to the adapter.
+    // Do not let a mid-gesture write roll back a newer wheel increment.
+    Timer { id: saveTimer; interval: 300; onTriggered: {if(root.manipulating){restart();return;}cfgFile.writeAdapter();} }
     function save() { saveTimer.restart(); }
+
+    function migrateDisks() {
+        if(root.manipulating)return;
+        const patch=StorageModules.upgrade(cfg,BarLayout.migrateScales);
+        if(Object.keys(patch).length)applyLayout(patch);
+    }
 
     function resetSettings() { for (const k in defaults) cfg[k] = defaults[k]; }
     readonly property bool modified: Object.keys(defaults).some(k => cfg[k] !== defaults[k])
@@ -278,7 +290,7 @@ Scope {
                                               tip: "Settings", hint: "Open settings" },
         { id: "power",    l: "Power",         cmd: "qs ipc call powermenu toggle", g: "\uDB81\uDC25",
                                               tip: "Power menu", hint: "Open", fixed: true }
-    ].concat(cfg.windowGroupsEnabled ? cfg.windowGroups.map(g=>({id:"minigroup-"+g.id,l:g.name})) : [])
+    ].concat(DiskStats.modules(cfg.diskVolumes)).concat(cfg.windowGroupsEnabled ? cfg.windowGroups.map(g=>({id:"minigroup-"+g.id,l:g.name})) : [])
     readonly property var moduleIds: moduleDefs.map(d => d.id)
     readonly property var defMap: moduleDefs.reduce((m, d) => { m[d.id] = d; return m; }, {})
     readonly property var comps: ({
@@ -299,8 +311,9 @@ Scope {
 
     function modVisible(id) {
         if (!isOn(id)) return false;
+        if (StorageModules.isDisk(id)) return cfg.diskVolumes.includes(StorageModules.volumeId(id));
         switch (id) {
-        case "cpu": case "ram": case "gpu":   return true;   // icon-sized, fits any bar orientation
+        case "cpu": case "ram": case "gpu": return true;
         case "media":   return Marquee.player !== null && Marquee.title !== "";
         case "battery": return battery !== null;
         default:        return true;
@@ -332,12 +345,17 @@ Scope {
 
     property var moduleSlots: []
     property var bubblePanels: []
+    property bool interactionTesting:false
     property bool nativeReservation: false
     property bool nativeControlBridge:false
     property bool nativeInputBridge:false
     property bool nativeLeftHeld:false
     property bool discardReleaseClick:false
     Timer{id:releaseClickTimer;interval:250;onTriggered:root.discardReleaseClick=false}
+    function releaseInputAfterDisconnect(){
+        closedNativeToken=nativeInputToken;nativeInputToken=-1;
+        ignoreClickUntil=Date.now()+350;releaseClickTimer.restart();
+    }
     property string lastNativeKind:""
     property real lastNativeDelta:0
     property double nativeInputToken:0
@@ -350,6 +368,16 @@ Scope {
         rectangles:bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>root.reservationRect(p))})
     Connections {
         target:Hyprland
+        ignoreUnknownSignals:true // Distribution runtime remains a usable rollback.
+        function onEventSocketConnectedChanged() {
+            if(Hyprland.eventSocketConnected)return;
+            // A release may have been lost: roll back the gesture, never commit it.
+            root.nativeLeftHeld=false;
+            root.cancelModuleDrag();
+            if(root.editOpen)root.closeEditor(false);
+            root.discardReleaseClick=true;
+            root.releaseInputAfterDisconnect();
+        }
         function onRawEvent(event) {
             if(event.name==="43pr_bubble_input"){root.nativeInput(event.data);return;}
             if(event.name==="43pr_bubble_control"){root.nativeControlHeld=event.data.trim()==="1";return;}
@@ -382,19 +410,20 @@ Scope {
     function flushSelectionWheel(){}
     property bool selectionSizing:false
     property real selectedScale:1
-    function individualFactor(id){return typeof cfg.moduleScale[id]==="number"?Math.max(0.5,Math.min(2,cfg.moduleScale[id])):1;}
-    function moduleFactor(id){return individualFactor(id)*Math.max(0.5,Math.min(2,cfg.moduleZoom));}
+    function individualFactor(id){return BarLayout.moduleScale(cfg,id);}
+    function moduleFactor(id){return individualFactor(id);}
+    function uniformScale(value){if(root.manipulating)return;cfgFile.waitForJob();applyLayout(BarLayout.uniformScale(value));}
     function adjustSelection(delta,modifiers){
         if(gestureMode!==""&&gestureMode!=="size")return true;gestureMode="size";
         if(!dragItem&&!dragGroupId)return false;
         const ids=dragItem?[dragItem.modelData]:(layoutGroups.find(g=>g.id===dragGroupId)||{items:[]}).items;
         if(!ids.length)return false;
-        const resized=BarLayout.resizeModules(cfg.moduleScale,ids,delta/120*0.05),scales=resized.values,next=resized.average;
+        const resized=BarLayout.resizeModules(cfg.moduleScale,ids,delta/120*0.05,cfg.moduleZoom),scales=resized.values,next=resized.average;
         cfg.moduleScale=scales;selectedScale=next;selectionSizing=true;opacityGesture=true;dragMoved=false;mergePanel=null;previewCells=({});
         opacityTarget=dragItem||bubblePanels.find(p=>p&&p.groupId===dragGroupId&&p.hostWindow===dragWindow);
         selectionOsdTimer.restart();save();return true;
     }
-    function groupAlpha(id) { return typeof cfg.groupOpacity[id]==="number"?Math.max(0.4,Math.min(1,cfg.groupOpacity[id])):1; }
+    function groupAlpha(id) { return typeof cfg.groupOpacity[id]==="number"?Math.max(0.4,Math.min(1,cfg.groupOpacity[id])):Math.max(0,Math.min(1,cfg.bgOpacity)); }
     function moduleAlpha(id) { return typeof cfg.moduleOpacity[id]==="number"?Math.max(0.4,Math.min(1,cfg.moduleOpacity[id])):groupAlpha(sectionOf(id)); }
     Timer {id:selectionOsdTimer;interval:1400}
     BarAnchor {id:selectionPlacement;position:cfg.position;target:root.opacityTarget}
@@ -426,10 +455,50 @@ Scope {
         const slot=moduleSlots.find(s=>s&&s.visible&&s.hostWindow&&inside(s));if(slot)return {item:slot,group:false};
         const group=bubblePanels.find(p=>p&&p.visible&&p.hostWindow&&inside(p));return group?{item:group,group:true}:null;
     }
+    // Reusable regression inventory: clipped input areas, including child controls.
+    function interactionTargets() {
+        const result=[];
+        for(const slot of moduleSlots){
+            if(!slot||!slot.visible||!slot.hostWindow)continue;
+            const bounds=root.taskRect(slot),screen=slot.hostWindow.screen;
+            function add(item,path){
+                let r=root.taskRect(item);if(!r||r.width<=0||r.height<=0)return;
+                let left=Math.max(bounds.x,r.x),top=Math.max(bounds.y,r.y),right=Math.min(bounds.x+bounds.width,r.x+r.width),bottom=Math.min(bounds.y+bounds.height,r.y+r.height);
+                for(let p=item.parent;p&&p!==slot;p=p.parent)if(p.clip){const c=root.taskRect(p);left=Math.max(left,c.x);top=Math.max(top,c.y);right=Math.min(right,c.x+c.width);bottom=Math.min(bottom,c.y+c.height);}
+                if(right-left<2||bottom-top<2)return;
+                result.push({module:slot.modelData,path:path,x:left+screen.x,y:top+screen.y,width:right-left,height:bottom-top});
+            }
+            function visit(item,path){if(!item||!item.visible||!item.enabled)return;if(item.pressedButtons!==undefined&&item.acceptedButtons!==undefined)add(item,path);const children=item.children||[];for(let i=0;i<children.length;i++)visit(children[i],path+"/"+i);}
+            add(slot,"slot");visit(slot,"slot");
+        }
+        return result;
+    }
+    function selectionAt(x,y) {
+        const hit=hitAt(x,y);if(!hit)return null;
+        const r=taskRect(hit.item),screen=hit.item.hostWindow.screen;
+        return {item:hit.item,group:hit.group,point:Qt.point(x-screen.x-r.x,y-screen.y-r.y)};
+    }
+    function selectPointerTarget(hit) {
+        if(!hit||!hit.item||!hit.item.hostWindow)return false;
+        if(hit.group?dragGroupId===hit.item.groupId:dragItem===hit.item)return true;
+        // A background MouseArea may have selected the bubble beneath a slot.
+        // Resolve ownership from the original press, before processing controls.
+        if(dragItem||dragGroupId){const closed=closedNativeToken;cancelModuleDrag();closedNativeToken=closed;}
+        if(hit.group)beginGroupDrag(hit.item,hit.point);else beginModuleDrag(hit.item,hit.point);
+        return true;
+    }
+    function selectPanelPointer(panel,point) {
+        const r=taskRect(panel),screen=panel.hostWindow.screen;
+        return selectPointerTarget(selectionAt(r.x+screen.x+point.x,r.y+screen.y+point.y));
+    }
+    property var nativePressSelection:null
+    property var inputTrace:[]
     function nativeInput(data){
         const parts=data.split(","),kind=parts[0],token=Number(parts[1]),x=Number(parts[2]),y=Number(parts[3]),delta=Number(parts[4]);
-        if(!Number.isFinite(token)||!Number.isFinite(x)||!Number.isFinite(y))return;lastNativeKind=kind;if(kind==="wheel")lastNativeDelta=delta;
-        if(kind==="press"){nativeLeftHeld=true;closedNativeToken=-1;nativeInputToken=token;nativePressPoint=Qt.point(x,y);return;}
+        if(!Number.isFinite(token)||!Number.isFinite(x)||!Number.isFinite(y))return;
+        if(interactionTesting){const hit=hitAt(x,y);inputTrace=inputTrace.slice(-31).concat([{kind:kind,token:token,x:x,y:y,time:Date.now(),hit:hit?(hit.group?hit.item.groupId:hit.item.modelData):"",editing:editOpen,dragging:dragItem?dragItem.modelData:dragGroupId}]);}
+        lastNativeKind=kind;if(kind==="wheel")lastNativeDelta=delta;
+        if(kind==="press"){nativeLeftHeld=true;closedNativeToken=-1;nativeInputToken=token;nativePressPoint=Qt.point(x,y);nativePressSelection=selectionAt(x,y);return;}
         if(kind==="menu"||kind==="opacity-all"||kind==="opacity-target"){
             if(manipulating)return;const hit=hitAt(x,y);if(hit)openEditor(hit.item,hit.group,kind==="menu"?"both":"opacity",kind==="opacity-all");else if(kind!=="menu"&&opacityController)root.run("qs ipc call opacity openControl "+(kind==="opacity-all"?"workspace":"window"));return;
         }
@@ -439,7 +508,7 @@ Scope {
         if(token===closedNativeToken)return;
         if(kind==="wheel"||kind==="rotate"){
             if(editOpen)return;
-            if(!dragItem&&!dragGroupId){const hit=hitAt(nativePressPoint.x,nativePressPoint.y);if(!hit)return;const r=root.taskRect(hit.item),screen=hit.item.hostWindow.screen,point=Qt.point(nativePressPoint.x-screen.x-r.x,nativePressPoint.y-screen.y-r.y);if(hit.group)beginGroupDrag(hit.item,point);else beginModuleDrag(hit.item,point);}
+            if(((!dragItem&&!dragGroupId)||!opacityGesture)&&!selectPointerTarget(nativePressSelection))return;
             if(kind==="wheel")adjustSelection(delta,Qt.NoModifier);else rotateDrag();return;
         }
         if(kind==="move"&&dragWindow&&(dragItem||dragGroupId)&&!opacityGesture){
@@ -457,7 +526,7 @@ Scope {
     function syncEditor(){preciseSize.control.value=(editorValue("size")-0.5)/1.5;preciseOpacity.control.value=(editorValue("opacity")-0.4)/0.6;}
     function openEditor(target,group,mode,all){
         if(manipulating)return;const item=group?target:slotFor(target);if(!item||!item.hostWindow)return;
-        const r=root.taskRect(item);editTarget=item;editScreen=item.hostWindow.screen;editScope=all?"all":group?"group":"module";editId=group?item.groupId:item.modelData;editMode=mode;editField=mode==="opacity"?"opacity":"size";editBefore=appearanceSnapshot();
+        cfgFile.waitForJob();const r=root.taskRect(item);editTarget=item;editScreen=item.hostWindow.screen;editScope=all?"all":group?"group":"module";editId=group?item.groupId:item.modelData;editMode=mode;editField=mode==="opacity"?"opacity":"size";editBefore=appearanceSnapshot();
         editPoint=Qt.point(Math.max(8,Math.min(editScreen.width-precisePanel.cardWidth-8,r.x+r.width+8)),Math.max(8,Math.min(editScreen.height-precisePanel.cardHeight-8,r.y)));
         processPopup.close();for(const calendar of calendarControllers)if(calendar)calendar.calOpen=false;
         if(notificationController)notificationController.panelOpen=false;if(powerController)powerController.closeMenu();if(volumeController)volumeController.closeAll();
@@ -467,8 +536,8 @@ Scope {
         if(!editOpen||!Number.isFinite(value))return;editField=field;
         value=Math.max(field==="opacity"?0.4:0.5,Math.min(field==="opacity"?1:2,value));const ids=editorIds();
         if(field==="size"){
-            if(editScope==="all")cfg.moduleZoom=Math.round(value*100)/100;
-            else cfg.moduleScale=BarLayout.resizeModules(cfg.moduleScale,ids,value-editorValue("size")).values;
+            if(editScope==="all")root.uniformScale(value);
+            else cfg.moduleScale=BarLayout.resizeModules(cfg.moduleScale,ids,value-editorValue("size"),cfg.moduleZoom).values;
         }else{
             const modules=Object.assign({},cfg.moduleOpacity),groups=Object.assign({},cfg.groupOpacity);
             for(const id of ids)modules[id]=Math.round(value*100)/100;
@@ -480,7 +549,7 @@ Scope {
     }
     function resetEditor(){
         if(editMode!=="opacity"){
-            if(editScope==="all")cfg.moduleZoom=1;
+            if(editScope==="all")root.uniformScale(1);
             else{const sizes=Object.assign({},cfg.moduleScale);for(const id of editorIds())delete sizes[id];cfg.moduleScale=sizes;}
         }
         if(editMode!=="size"){
@@ -561,7 +630,7 @@ Scope {
     property var dragSavedAppearance:null
     function appearanceSnapshot(){return {moduleScale:cfg.moduleScale,moduleZoom:cfg.moduleZoom,moduleOpacity:cfg.moduleOpacity,groupOpacity:cfg.groupOpacity};}
     function restoreAppearance(state){if(!state)return;for(const key of Object.keys(state))cfg[key]=state[key];save();}
-    function rememberDrag() {gestureMode="";discardReleaseClick=true;releaseClickTimer.stop();dragSavedAppearance=appearanceSnapshot(); dragModuleRotation=0;opacityGesture=false;dragMoved=false;dragSavedCells=cfg.groupCells;dragSavedRotations=cfg.groupRotations; }
+    function rememberDrag() {cfgFile.waitForJob();gestureMode="";discardReleaseClick=true;releaseClickTimer.stop();dragSavedAppearance=appearanceSnapshot(); dragModuleRotation=0;opacityGesture=false;dragMoved=false;dragSavedCells=cfg.groupCells;dragSavedRotations=cfg.groupRotations; }
     property double lastRotationAt:0
     function rotateDrag() {
         if(!dragWindow || opacityGesture || Date.now()-lastRotationAt<70)return;
@@ -622,6 +691,7 @@ Scope {
     property point groupOrigin: Qt.point(0,0)
     property double ignoreClickUntil: 0
     function beginModuleDrag(slot, point) {
+        if(nativeInputBridge&&!nativeLeftHeld)return;
         if(!slot.hostWindow||editOpen||dragItem||dragGroupId)return;
         for(const calendar of calendarControllers)if(calendar)calendar.calOpen=false;
         processPopup.close();if(notificationController)notificationController.panelOpen=false;
@@ -642,7 +712,7 @@ Scope {
         if(dragItem || dragGroupId)ignoreClickUntil=Date.now()+250;
         if(!commit)restoreAppearance(dragSavedAppearance);dragSavedAppearance=null;selectionOsdTimer.stop();
         if(!commit && dragSavedCells!==null){cfg.groupCells=dragSavedCells;cfg.groupRotations=dragSavedRotations;}
-        dragItem=null;dragGroupId="";dragWindow=null;mergePanel=null;previewCells=({});dragMoved=false;gestureMode="";dragSavedCells=null;dragSavedRotations=null;dragTargets=({});dragModuleTargets=({});
+        dragItem=null;dragGroupId="";dragWindow=null;mergePanel=null;previewCells=({});dragMoved=false;gestureMode="";opacityGesture=false;dragSavedCells=null;dragSavedRotations=null;dragTargets=({});dragModuleTargets=({});
     }
     function finishModuleDrag() {
         flushSelectionWheel();
@@ -661,6 +731,7 @@ Scope {
         layoutPriority=newId;cancelModuleDrag(true);applyLayout(result);
     }
     function beginGroupDrag(panel,point) {
+        if(nativeInputBridge&&!nativeLeftHeld)return;
         if(dragItem || dragGroupId || editOpen)return;
         rememberDrag();dragWindow=panel.hostWindow;dragGroupId=panel.groupId;
         dragStart=panel.mapToItem(dragWindow.contentItem,point.x,point.y);dragPoint=dragStart;
@@ -740,9 +811,12 @@ Scope {
 
     IpcHandler {
         target: "bar"
-        function setZoomPercent(percent:int):void{cfg.moduleZoom=Math.max(50,Math.min(200,percent))/100;root.save();}
-        function resetSizes():void {cfg.moduleScale=({});cfg.moduleZoom=1;root.save();}
+        function setZoomPercent(percent:int):void{root.uniformScale(percent/100);}
+        function resetSizes():void {root.uniformScale(1);}
         function resetOpacities():void {cfg.groupOpacity=({});cfg.moduleOpacity=({});root.save();}
+        function guardInteractions(value:bool):void{root.interactionTesting=value;if(!value)root.inputTrace=[];}
+        function inputTraceState():string{return JSON.stringify(root.inputTrace);}
+        function interactionState(): string {return JSON.stringify(root.interactionTargets());}
         function layoutState(): string {
             return JSON.stringify({gestureMode:root.gestureMode,moduleRotation:root.dragModuleRotation,moved:root.dragMoved,groupRotations:cfg.groupRotations,appDragging:root.appDragItem!==null,freeLayout:cfg.freeLayout,reserveSpace:cfg.reserveSpace,nativeReservation:root.nativeReservation,nativeControlBridge:root.nativeControlBridge,nativeInputBridge:root.nativeInputBridge,manipulating:root.manipulating,processPopupOpen:processPopup.opened,input:{discardClick:root.discardReleaseClick,kind:root.lastNativeKind,delta:root.lastNativeDelta,left:root.nativeLeftHeld,token:root.nativeInputToken},editor:{sizeInput:root.editorRect(preciseSize.inputItem()),opacityInput:root.editorRect(preciseOpacity.inputItem()),buttons:[0,1,2].map(i=>root.editorRect(editorActions.itemAt(i))),x:root.editPoint.x,y:root.editPoint.y,width:precisePanel.cardWidth,height:precisePanel.cardHeight,open:root.editOpen,scope:root.editScope,id:root.editId,mode:root.editMode,size:root.editorValue("size"),opacity:root.editorValue("opacity")},zoom:cfg.moduleZoom,groupDrag:root.dragGroupId,mergeTarget:root.mergePanel?root.mergePanel.groupId:"",locale:LocaleState.language,date:LocaleState.locale.toString(new Date(),"dddd, d MMMM yyyy"),groups:root.layoutGroups,panels:root.bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>({id:p.groupId,selected:root.dragGroupId===p.groupId,border:p.border.width,opacity:root.groupAlpha(p.groupId),geometry:root.taskRect(p),items:p.model})),calendars:root.calendarControllers.filter(c => c && c.clockTarget).map(c => ({open:c.calOpen,geometry:root.taskRect(c.clockTarget)})),dragging:root.dragItem ? root.dragItem.modelData : "",
                 modules:root.moduleSlots.filter(s => s && s.hostWindow).map(s => ({id:s.modelData,holding:s.holding,size:root.moduleFactor(s.modelData),pressed:s.item&&s.item.debugPressed!==undefined?s.item.debugPressed:false,hovered:s.item&&s.item.hovered!==undefined?s.item.hovered:false,itemSize:s.item?{width:s.item.width,height:s.item.height}:null,opacity:root.moduleAlpha(s.modelData),vertical:s.moduleVertical,geometry:root.taskRect(s)}))});
@@ -763,7 +837,7 @@ Scope {
             if(root.appDragItem)root.finishAppDrag();
         }
         function resetLayout(): void { cfg.freeLayout=false; cfg.groupCells=({}); cfg.moduleGroups=[]; cfg.startMods=root.defaults.startMods; cfg.centerMods=root.defaults.centerMods; cfg.endMods=root.defaults.endMods; root.save(); }
-        function statsState(): string { return JSON.stringify({gpu:GpuStats.sample,buttons:root.statButtons.map(s => ({kind:s.modelData,geometry:root.taskRect(s)}))}); }
+        function statsState(): string { return JSON.stringify({gpu:GpuStats.sample,disks:{selected:cfg.diskVolumes,volumes:DiskStats.volumes,error:DiskStats.error},buttons:root.statButtons.map(s => ({kind:s.modelData,geometry:root.taskRect(s)}))}); }
         function tasksState(): string {
             const ready = root.nativeToplevels.length;
             return JSON.stringify({collapsed:cfg.tasksCollapsed, iconSize:cfg.taskIconSize,
@@ -940,18 +1014,17 @@ Scope {
         LazyLoader {
             active: tp.shown && tp.usable
 
-            PopupWindow {
-                readonly property var win: tp.target.QsWindow.window
-                readonly property point p: win && tp.target ? win.contentItem.mapFromItem(tp.target, 0, 0) : Qt.point(0, 0)
-
-                anchor.window: win
-                anchor.adjustment: PopupAdjustment.Slide
-                anchor.rect.x: root.vertical
-                    ? (cfg.position === "left" ? p.x + tp.target.width + 6 : p.x - implicitWidth - 6)
-                    : p.x + (tp.target.width - implicitWidth) / 2
-                anchor.rect.y: root.vertical
-                    ? p.y + (tp.target.height - implicitHeight) / 2
-                    : (cfg.position === "top" ? p.y + tp.target.height + 6 : p.y - implicitHeight - 6)
+            PanelWindow {
+                readonly property var win: tp.target ? tp.target.QsWindow.window : null
+                screen:win ? win.screen : Quickshell.screens[0]
+                anchors {left:true;top:true}
+                exclusionMode:ExclusionMode.Ignore
+                WlrLayershell.layer:WlrLayer.Overlay
+                WlrLayershell.namespace:"43pr-tooltip"
+                mask:Region{}
+                BarAnchor {id:tooltipPlacement;position:cfg.position;target:tp.target;gap:6}
+                readonly property point placement:tooltipPlacement.place(width,height,screen.width,screen.height,0,0)
+                margins.left:placement.x;margins.top:placement.y
                 implicitWidth: tcol.implicitWidth + 20
                 implicitHeight: tcol.implicitHeight + 14
                 color: "transparent"
@@ -1069,7 +1142,7 @@ Scope {
             onReleased: mouse => { if(mouse.button!==Qt.LeftButton)return; if(root.appDragItem===it&&!root.appDragNative)root.finishAppDrag(); if (root.dragItem === slotParent()) root.finishModuleDrag(); preventStealing=false; }
             onCanceled: { if(root.appDragItem===it&&!root.appDragNative)root.appDragItem=null; if (root.dragItem === slotParent()&&!root.nativeLeftHeld) root.cancelModuleDrag(); preventStealing=false; }
             onClicked: mouse => {
-                if (it.disabled || root.discardReleaseClick || root.manipulating || root.appDragItem || Date.now() < root.ignoreClickUntil) return;
+                if (root.interactionTesting || it.disabled || root.discardReleaseClick || root.manipulating || root.appDragItem || Date.now() < root.ignoreClickUntil) return;
                 if (mouse.button === Qt.LeftButton) it.primary();
                 else if (mouse.button === Qt.MiddleButton) it.tertiary();
                 else if(!(mouse.modifiers&Qt.ControlModifier))it.secondaryAction();
@@ -1199,6 +1272,7 @@ Scope {
         implicitWidth:moduleLoader.implicitWidth*sizeFactor
         implicitHeight:moduleLoader.implicitHeight*sizeFactor
         width: implicitWidth; height: implicitHeight
+        Rectangle {anchors.fill:parent;color:Qt.rgba(Theme.bg.r,Theme.bg.g,Theme.bg.b,1);visible:root.dragItem===moduleSlot&&root.dragMoved;radius:Theme.radius}
         Rectangle {
             anchors.fill: parent; anchors.margins: -1; radius: Theme.radius
             color: "transparent"; border.width: 2; border.color: Theme.accent
@@ -1211,7 +1285,7 @@ Scope {
         Loader {
             id:moduleLoader;scale:moduleSlot.sizeFactor;transformOrigin:Item.TopLeft
             width:implicitWidth;height:implicitHeight
-            sourceComponent: moduleSlot.modelData === "clock" ? moduleSlot.clockComp : (moduleSlot.modelData.startsWith("minigroup-") ? tasksC : (root.comps[moduleSlot.modelData] ?? root.comps.icon))
+            sourceComponent: moduleSlot.modelData === "clock" ? moduleSlot.clockComp : (moduleSlot.modelData.startsWith("minigroup-") ? tasksC : (StorageModules.isDisk(moduleSlot.modelData) ? diskC : (root.comps[moduleSlot.modelData] ?? root.comps.icon)))
             onLoaded:if(item.mid!==undefined)item.mid=moduleSlot.modelData
         }
     }
@@ -1247,7 +1321,11 @@ Scope {
         height: Math.max(!rotatedVertical?root.panelThick:0,metrics.height+2*root.bubblePadding)
         opacity:root.dragMoved&&root.dragItem&&model.length===1&&model[0]===root.dragItem.modelData?0:1
         radius: root.barRadius
-        color: root.joined&&!cfg.freeLayout?"transparent":Qt.alpha(root.bgColor,root.bgColor.a*root.groupAlpha(groupId))
+        color: "transparent"
+        BarSurface {
+            z:-1;anchors.fill:parent;surfaceColor:Theme.bg;surfaceOpacity:root.groupAlpha(panel.groupId);radius:panel.radius
+            patches:root.moduleSlots.filter(slot=>slot&&slot.hostWindow===panel.hostWindow&&slot.visible&&panel.model.includes(slot.modelData)&&!(root.dragMoved&&root.dragItem===slot)).map(slot=>{const p=slot.mapToItem(panel,0,0);return{x:p.x,y:p.y,width:slot.width,height:slot.height,opacity:root.moduleAlpha(slot.modelData)};})
+        }
         border.width: root.dragGroupId===groupId||root.mergePanel===panel?2:cfg.border&&!root.joined?1:0
         border.color: root.dragGroupId===groupId||root.mergePanel===panel?Theme.accent:root.borderColor
         Behavior on x {enabled:(root.dragItem!==null||root.dragGroupId!=="")&&root.dragGroupId!==groupId;NumberAnimation{duration:100}}
@@ -1257,8 +1335,8 @@ Scope {
 
             property point pressedAt:Qt.point(0,0)
             onPressed:mouse=>{if(root.manipulating)return;if(mouse.button===Qt.RightButton){if(mouse.modifiers&Qt.ControlModifier)root.openEditor(panel,true,"both");else root.openSettings();return;}pressedAt=Qt.point(mouse.x,mouse.y);}
-            onPressAndHold:mouse=>{if(mouse.button===Qt.LeftButton)root.beginGroupDrag(panel,Qt.point(mouse.x,mouse.y));}
-            onPositionChanged:mouse=>{if(!(pressedButtons&Qt.LeftButton))return;if(!root.dragGroupId&&Math.hypot(mouse.x-pressedAt.x,mouse.y-pressedAt.y)>6)root.beginGroupDrag(panel,pressedAt);root.updateGroupDrag(panel,Qt.point(mouse.x,mouse.y));}
+            onPressAndHold:mouse=>{if(mouse.button===Qt.LeftButton)root.selectPanelPointer(panel,Qt.point(mouse.x,mouse.y));}
+            onPositionChanged:mouse=>{if(!(pressedButtons&Qt.LeftButton))return;if(!root.dragGroupId&&!root.dragItem&&Math.hypot(mouse.x-pressedAt.x,mouse.y-pressedAt.y)>6)root.selectPanelPointer(panel,pressedAt);if(root.dragItem)root.updateModuleDrag(root.dragItem,panel.mapToItem(root.dragItem,mouse.x,mouse.y));else root.updateGroupDrag(panel,Qt.point(mouse.x,mouse.y));}
             onReleased:mouse=>{if(mouse.button===Qt.LeftButton)root.finishGroupDrag(panel);}
             onCanceled:if(!root.nativeLeftHeld)root.cancelModuleDrag()
             onWheel:wheel=>{if(root.editOpen){wheel.accepted=true;return;}if(root.dragItem||root.dragGroupId){if(!root.nativeInputBridge)root.queueSelectionWheel(wheel.angleDelta.y,wheel.modifiers);wheel.accepted=true;return;}if(pressedButtons&Qt.LeftButton){if(!root.dragGroupId&&!root.dragItem)root.beginGroupDrag(panel,pressedAt);wheel.accepted=root.queueSelectionWheel(wheel.angleDelta.y,wheel.modifiers);}else wheel.accepted=false;}
@@ -1401,87 +1479,94 @@ Scope {
         }
     }
 
-    // CPU / RAM — rounded badges, value only (no %)
-    //   "compact": round badge, same size as the app icons, number only
-    //   "default": capsule with label + number ("CPU 12" / stacked on vertical bars)
-    Component {
-        id: statsC
-        Lane {
-            property string mid: "cpu"
-            gap: 2
-            Repeater {
-                model: [parent.mid.toUpperCase()]
-                delegate: Interactive {
-                    id: stat
-                    readonly property bool moduleVertical:root.moduleIsVertical(stat)
-                    required property string modelData
-                    Component.onCompleted: root.statButtons = root.statButtons.filter(t => t && t.objectName !== undefined).concat([stat])
-                    Component.onDestruction: root.statButtons = root.statButtons.filter(s => s !== stat)
-                    readonly property bool isCpu: modelData === "CPU"
-                    readonly property bool isGpu: modelData === "GPU"
-                    readonly property bool compact: cfg.statsMode === "compact"
-                    readonly property int val: isCpu ? root.cpuUsage : isGpu ? GpuStats.usage : root.memPercent
-                    readonly property color fg: warning ? Theme.danger : Theme.text
-                    readonly property int fontPx: Math.round(root.sz.taskIcon * 0.5)
+    // Shared resource badge: CPU, RAM, GPU and each selected filesystem.
+    component ResourceBadge: Interactive {
+        id: stat
+        property string label: ""
+        property string value: "—"
+        readonly property bool moduleVertical:root.moduleIsVertical(stat)
+        readonly property bool compact:cfg.statsMode === "compact"
+        readonly property color fg:warning ? Theme.danger : Theme.text
+        readonly property int fontPx:Math.round(root.sz.taskIcon * 0.5)
+        Layout.alignment:Qt.AlignCenter
+        implicitWidth:moduleVertical ? Math.max(root.panelThick,badge.width + 8) : badge.width + 8
+        implicitHeight:moduleVertical ? badge.height + 8 : Math.max(root.panelThick - 2,badge.height + 6)
+        Rectangle {
+            id: badge
+            anchors.centerIn: parent
+            // compact: circle the size of an app icon
+            // default: capsule sized to its label + number
+            width: stat.compact ? root.sz.taskIcon
+                 : stat.moduleVertical ? root.sz.taskIcon + 6
+                 : statRow.implicitWidth + 14
+            height: stat.compact ? root.sz.taskIcon
+                  : stat.moduleVertical ? statRow.implicitHeight + 10
+                  : root.sz.taskIcon
+            radius: Math.min(width, height) / 2
+            color: Qt.alpha(stat.fg, 0.045)
+            border.width: 1
+            border.color: Qt.alpha(stat.fg, 0.18)
 
+            GridLayout {
+                id: statRow
+                anchors.centerIn: parent
+                flow: stat.moduleVertical ? GridLayout.TopToBottom : GridLayout.LeftToRight
+                rowSpacing: 0
+                columnSpacing: 4
+
+                Text {
+                    visible: !stat.compact
                     Layout.alignment: Qt.AlignCenter
-                    implicitWidth: stat.moduleVertical ? root.panelThick : badge.width + 8
-                    implicitHeight: stat.moduleVertical ? badge.height + 8
-                                                  : Math.max(root.panelThick - 2, badge.height + 6)
-
-                    onPrimary: processPopup.toggle(stat, modelData)
-                    primaryHint: "Voir les processus les plus consommateurs"
-                    warning: val >= cfg.statsWarn
-                    tip: isCpu ? "CPU usage: " + val + "%"
-                               : isGpu ? (GpuStats.available ? "GPU : " + GpuStats.usage + "% · " + GpuStats.temperature : "GPU : mesure indisponible")
-                               : "Memory: " + root.memUsedG.toFixed(1) + " / " + root.memTotalG.toFixed(1)
-                                 + " GiB (" + val + "%)"
-
-                    Rectangle {
-                        id: badge
-                        anchors.centerIn: parent
-                        // compact: circle the size of an app icon
-                        // default: capsule sized to its label + number
-                        width: stat.compact ? root.sz.taskIcon
-                             : stat.moduleVertical ? root.sz.taskIcon + 6
-                             : statRow.implicitWidth + 14
-                        height: stat.compact ? root.sz.taskIcon
-                              : stat.moduleVertical ? statRow.implicitHeight + 10
-                              : root.sz.taskIcon
-                        radius: Math.min(width, height) / 2
-                        color: Qt.alpha(stat.fg, 0.045)
-                        border.width: 1
-                        border.color: Qt.alpha(stat.fg, 0.18)
-
-                        GridLayout {
-                            id: statRow
-                            anchors.centerIn: parent
-                            flow: stat.moduleVertical ? GridLayout.TopToBottom : GridLayout.LeftToRight
-                            rowSpacing: 0
-                            columnSpacing: 4
-
-                            Text {
-                                visible: !stat.compact
-                                Layout.alignment: Qt.AlignCenter
-                                text: stat.modelData
-                                color: Qt.alpha(stat.fg, 0.75)
-                                font.family: Theme.iconFont
-                                font.pixelSize: stat.fontPx - 1
-                                renderType: Text.NativeRendering
-                            }
-                            Text {
-                                Layout.alignment: Qt.AlignCenter
-                                text: stat.val
-                                color: stat.fg
-                                font.family: Theme.iconFont
-                                font.bold: true
-                                font.pixelSize: stat.fontPx
-                                renderType: Text.NativeRendering
-                            }
-                        }
-                    }
+                    text: stat.label
+                    color: Qt.alpha(stat.fg, 0.75)
+                    font.family: Theme.iconFont
+                    font.pixelSize: stat.fontPx - 1
+                    renderType: Text.NativeRendering
+                }
+                Text {
+                    Layout.alignment: Qt.AlignCenter
+                    text: stat.value
+                    color: stat.fg
+                    font.family: Theme.iconFont
+                    font.bold: true
+                    font.pixelSize: stat.fontPx
+                    renderType: Text.NativeRendering
                 }
             }
+        }
+    }
+
+    Component {
+        id: statsC
+        ResourceBadge {
+            id: stat
+            property string mid: "cpu"
+            readonly property string modelData:mid.toUpperCase()
+            readonly property bool isCpu:mid === "cpu"
+            readonly property bool isGpu:mid === "gpu"
+            readonly property int val:isCpu ? root.cpuUsage : isGpu ? GpuStats.usage : root.memPercent
+            label:modelData
+            value:String(val)
+            warning:val >= cfg.statsWarn
+            primaryHint:LocaleState.tr("Voir les processus les plus consommateurs","View top processes")
+            onPrimary:processPopup.toggle(stat,modelData)
+            tip:isCpu ? "CPU usage: " + val + "%" : isGpu ? (GpuStats.available ? "GPU : " + GpuStats.usage + "% · " + GpuStats.temperature : LocaleState.tr("GPU : mesure indisponible","GPU: measurement unavailable")) : "Memory: " + root.memUsedG.toFixed(1) + " / " + root.memTotalG.toFixed(1) + " GiB (" + val + "%)"
+            Component.onCompleted:root.statButtons=root.statButtons.filter(t=>t&&t.objectName!==undefined).concat([stat])
+            Component.onDestruction:root.statButtons=root.statButtons.filter(t=>t!==stat)
+        }
+    }
+
+    Component {
+        id: diskC
+        ResourceBadge {
+            property string mid: ""
+            readonly property var volume:DiskStats.volume(StorageModules.volumeId(mid))
+            label:LocaleState.tr("DSQ","DSK")
+            value:volume.mounted ? String(volume.percent) : "—"
+            warning:volume.mounted && volume.percent >= cfg.statsWarn
+            tip:DiskStats.description(volume)
+            primaryHint:LocaleState.tr("Choisir les disques","Choose disks")
+            onPrimary:root.run("qs ipc -p ~/.config/quickshell call settings bar")
         }
     }
 
@@ -1531,9 +1616,9 @@ Scope {
                             onPressAndHold:mouse=>{const slot=workspaceModule.pressedSlot;if(slot&&mouse.button===Qt.LeftButton){preventStealing=true;root.beginModuleDrag(slot,dotMa.mapToItem(slot,mouse.x,mouse.y));}}
                             onPositionChanged:mouse=>{const slot=workspaceModule.pressedSlot;if(slot&&root.dragItem===slot)root.updateModuleDrag(slot,dotMa.mapToItem(slot,mouse.x,mouse.y));}
                             onReleased:mouse=>{if(mouse.button!==Qt.LeftButton)return;if(root.dragItem===workspaceModule.pressedSlot)root.finishModuleDrag();workspaceModule.pressedSlot=null;preventStealing=false;}
-                            onCanceled:{if(root.dragItem===workspaceModule.pressedSlot)root.cancelModuleDrag();workspaceModule.pressedSlot=null;preventStealing=false;}
+                            onCanceled:{if(root.dragItem===workspaceModule.pressedSlot&&!root.nativeLeftHeld)root.cancelModuleDrag();workspaceModule.pressedSlot=null;preventStealing=false;}
                             onClicked: mouse => {
-                                if(root.discardReleaseClick||root.manipulating||Date.now()<root.ignoreClickUntil)return;
+                                if(root.interactionTesting||root.discardReleaseClick||root.manipulating||Date.now()<root.ignoreClickUntil)return;
                                 if (mouse.button === Qt.RightButton) root.openSettings();
                                 else Hyprland.dispatch("hl.dsp.focus({ workspace = " + dot.modelData.id + " })");
                             }
@@ -1633,7 +1718,7 @@ Scope {
         taskButtons = taskButtons.filter(t => t !== item);
     }
     function taskRect(item) {
-        const w = item ? item.hostWindow : null;
+        const w = item ? (item.hostWindow || item.QsWindow.window) : null;
         if (!w || !w.screen) return null;
         // mapFromItem alone does not notify QML when an ancestor moves.
         let dependency=0,ancestor=item;
@@ -1923,7 +2008,11 @@ Scope {
                     visible: root.joined && !cfg.freeLayout
                     anchors.fill: parent
                     radius: root.barRadius
-                    color: root.bgColor
+                    color:"transparent"
+                    BarSurface {
+                        z:-1;anchors.fill:parent;surfaceColor:Theme.bg;surfaceOpacity:cfg.bgOpacity;radius:root.barRadius
+                        holes:root.bubblePanels.filter(p=>p&&p.hostWindow===bar&&p.visible).map(p=>({x:p.x,y:p.y,width:p.width,height:p.height,radius:p.radius}))
+                    }
                     border.width: cfg.border ? 1 : 0
                     border.color: root.borderColor
                 }
