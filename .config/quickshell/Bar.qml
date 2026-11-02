@@ -186,7 +186,9 @@ Scope {
         const scale=BarLayout.migrateBarScale(JSON.parse(cfgFile.text()));
         if(cfg.barScale!==scale.barScale||cfg.moduleZoom!==scale.moduleZoom)Object.assign(patch,scale);
         if(cfg.moduleRegistryVersion<1){
-            const placed=[...cfg.moduleGroups.flatMap(g=>g.items||[]),...root.csv(cfg.startMods),...root.csv(cfg.centerMods),...root.csv(cfg.endMods)];
+            let placed=[];
+            for(let i=0;i<cfg.moduleGroups.length;i++)placed=placed.concat(Array.from(cfg.moduleGroups[i].items||[]));
+            placed=placed.concat(root.csv(cfg.startMods),root.csv(cfg.centerMods),root.csv(cfg.endMods));
             if(!placed.includes("temp")&&!root.csv(cfg.hidden).includes("temp"))patch.hidden=cfg.hidden+(cfg.hidden?",":"")+"temp";
             patch.moduleRegistryVersion=1;
         }
