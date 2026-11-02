@@ -40,16 +40,22 @@ Scope {
     property bool dragging: false
     property real offsetX: 0
     property real offsetY: 0
-    property int menuSize: 100
+    property int menuSize: 100        // COMPONENT scale (%): panel, spacing, text
+    property int textSize: 100        // TEXT size (%): fonts only, on top of the component scale
     readonly property real ui: menuSize / 100
+    readonly property real tx: textSize / 100
     readonly property int cardWidth: Math.round(baseWidth * ui)
     readonly property bool movedFromDefault: offsetX !== 0 || offsetY !== 0
+
+    // wheel accumulators so touchpads / smooth wheels step once per notch
+    property real wheelAccText: 0
+    property real wheelAccScale: 0
 
     readonly property string home: Quickshell.env("HOME")
 
     // toast lifetimes (ms) when the app gives no timeout
-    readonly property int normalTimeout: 6000
-    readonly property int criticalTimeout: 20000
+    readonly property int normalTimeout: 3000
+    readonly property int criticalTimeout: 6000
 
     // grouping state (collapsed groups are persisted, expanded entries are not)
     property var collapsedApps: ({})
@@ -64,12 +70,14 @@ Scope {
 
     property var groupOffsets: ({})
     property bool animateRows: false
+    property int scrollDir: 1   // +1 = scrolling to older entries, -1 = to newer
 
     // Do Not Disturb normally lets critical notifications through. Many chat
     // apps (Discord and its clients) mark everything critical, so these apps
     // are muted by DND regardless of urgency. Lowercase substrings of appName.
     property var dndMuteCritical: ["discord", "vesktop", "webcord", "armcord"]
-    Timer { id: animTimer; interval: 400; onTriggered: root.animateRows = false }
+    // must outlast the whole scroll transition (stagger + longest animation)
+    Timer { id: animTimer; interval: 800; onTriggered: root.animateRows = false }
 
     // extra glyphs (Nerd Font / Material Design Icons, written as surrogate pairs)
     readonly property string icDown: "\uDB80\uDD40"
@@ -94,16 +102,22 @@ Scope {
         }
     }
 
-    // must outlast the longest fade (toast 200ms / panel 200ms)
+    // must outlast the longest animation (toast 380ms / panel 340ms)
     Timer {
         id: unmountTimer
-        interval: 260
+        interval: 440
         onTriggered: root.mounted = false
     }
+
+    // true only for a moment after the panel opens: rows created in that window
+    // play the staggered entry; rows created later (scrolling, rebuilds) don't
+    property bool opening: false
+    Timer { id: openingTimer; interval: 700; onTriggered: root.opening = false }
 
     onPanelOpenChanged: {
         console.info("43PR notifications: panelOpen=" + panelOpen);
         if (!panelOpen) {
+            opening = false;
             dragging = false;
             // closing mid-drag never delivers a release event; persist anyway
             if (stateReady) stateTimer.restart();
@@ -115,6 +129,44 @@ Scope {
     function imgSrc(p) { return !p ? "" : (p.startsWith("/") ? "file://" + p : p); }
     function canExpand(body) { return body.length > 70 || body.indexOf("\n") >= 0; }
     function groupKey(app) { return app && app !== "" ? app : "Other"; }
+
+    // component scale
+    function setSize(v) {
+        root.menuSize = Math.max(60, Math.min(200, Math.round(v)));
+        stateTimer.restart();
+    }
+
+    // text size
+    function setTextSize(v) {
+        root.textSize = Math.max(60, Math.min(200, Math.round(v)));
+        stateTimer.restart();
+    }
+
+    // Ctrl + wheel -> text size. One 5% step per 120 units of angleDelta (one wheel notch)
+    function wheelText(delta) {
+        root.wheelAccText += delta;
+        while (root.wheelAccText >= 120) {
+            root.wheelAccText -= 120;
+            root.setTextSize(root.textSize + 5);
+        }
+        while (root.wheelAccText <= -120) {
+            root.wheelAccText += 120;
+            root.setTextSize(root.textSize - 5);
+        }
+    }
+
+    // Shift + wheel -> component scale
+    function wheelScale(delta) {
+        root.wheelAccScale += delta;
+        while (root.wheelAccScale >= 120) {
+            root.wheelAccScale -= 120;
+            root.setSize(root.menuSize + 5);
+        }
+        while (root.wheelAccScale <= -120) {
+            root.wheelAccScale += 120;
+            root.setSize(root.menuSize - 5);
+        }
+    }
 
     function guessKind(app, summary) {
         const s = ((app || "") + " " + (summary || "")).toLowerCase();
@@ -276,6 +328,7 @@ Scope {
             return true;
         }
 
+        scrollDir = delta > 0 ? 1 : -1;
         animateRows = true;
         animTimer.restart();
 
@@ -438,6 +491,7 @@ Scope {
                 if (typeof s.beforeNightDnd === "boolean") root.beforeNightDnd = s.beforeNightDnd;
                 if (typeof s.soundEnabled === "boolean") root.soundEnabled = s.soundEnabled;
                 if (typeof s.menuSize === "number") root.menuSize = Math.max(60, Math.min(200, Math.round(s.menuSize)));
+                if (typeof s.textSize === "number") root.textSize = Math.max(60, Math.min(200, Math.round(s.textSize)));
                 if (typeof s.offsetX === "number") root.offsetX = s.offsetX;
                 if (typeof s.offsetY === "number") root.offsetY = s.offsetY;
                 if (Array.isArray(s.collapsed)) {
@@ -475,6 +529,7 @@ Scope {
                 nightMode: root.nightMode, beforeNightDnd: root.beforeNightDnd,
                 soundEnabled: root.soundEnabled,
                 menuSize: root.menuSize,
+                textSize: root.textSize,
                 offsetX: root.offsetX,
                 offsetY: root.offsetY,
                 collapsed: coll
@@ -605,10 +660,11 @@ Scope {
     }
 
     // ---- reusable pieces ------------------------------------------------------
+    // text follows the component scale AND the text size
     component Lbl: Text {
         property real ui: 1
         property real sz: 10
-        font.pixelSize: Math.round(sz * ui)
+        font.pixelSize: Math.round(sz * ui * root.tx)
         color: Theme.text
         elide: Text.ElideRight
     }
@@ -694,16 +750,6 @@ Scope {
         }
     }
 
-    component SizeBtn: Text {
-        id: sb
-        signal clicked()
-        height: 16
-        verticalAlignment: Text.AlignVCenter
-        horizontalAlignment: Text.AlignHCenter
-        color: Theme.text
-        MouseArea { anchors.fill: parent; onClicked: sb.clicked() }
-    }
-
     // ---- the window: only exists while mounted --------------------------------
     LazyLoader {
         id: notificationLoader
@@ -779,11 +825,6 @@ Scope {
             readonly property real effX: sized ? Math.max(limMinX, Math.min(limMaxX, root.offsetX)) : root.offsetX
             readonly property real effY: sized ? Math.max(limMinY, Math.min(limMaxY, root.offsetY)) : root.offsetY
 
-            function setSize(v) {
-                root.menuSize = Math.max(60, Math.min(200, v));
-                stateTimer.restart();
-            }
-
             // Only called while the user is dragging (window is fully sized then).
             function setPosition(x, y) {
                 if (!win.sized) return;
@@ -840,11 +881,13 @@ Scope {
                         property bool notificationClosed: false
                         property bool expanded: false
                         property bool copied: false
+                        // invisible countdown: drives the toast lifetime (no UI)
+                        property real lifeLeft: 1
                         readonly property bool critical: modelData.urgency === NotificationUrgency.Critical
 
                         readonly property bool persistent: modelData.expireTimeout === 0
                         readonly property int lifetime: persistent ? 0 : modelData.expireTimeout > 0
-                            ? Math.max(root.normalTimeout, modelData.expireTimeout)
+                            ? modelData.expireTimeout
                             : (critical ? root.criticalTimeout : root.normalTimeout)
                         function restartLifetime() {
                             if (persistent) progAnim.stop();
@@ -864,7 +907,7 @@ Scope {
 
                         Timer {
                             id: gone
-                            interval: 220
+                            interval: 400
                             onTriggered: {
                                 const n = wrapper.modelData;
                                 if (!n || wrapper.notificationClosed || !n.tracked) return;
@@ -875,6 +918,21 @@ Scope {
                         }
 
                         Timer { id: copiedTimer; interval: 900; onTriggered: wrapper.copied = false }
+
+                        // The toast's lifetime. Nothing is drawn: this just counts
+                        // down, pauses while the card is hovered or expanded, and
+                        // closes the toast when it runs out.
+                        NumberAnimation {
+                            id: progAnim
+                            target: wrapper
+                            property: "lifeLeft"
+                            from: 1
+                            to: 0
+                            duration: wrapper.lifetime
+                            running: !wrapper.leaving && !wrapper.persistent && !wrapper.notificationClosed
+                            paused: hh.hovered || wrapper.expanded
+                            onFinished: wrapper.close(true)
+                        }
 
                         // a replaced/updated notification gets a fresh lifetime
                         Connections {
@@ -899,7 +957,12 @@ Scope {
                             border.color: Theme.danger
                             opacity: wrapper.shown ? 1 : 0
 
-                            Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.InOutQuad } }
+                            // slides in from the right edge of the screen (and
+                            // back out the same way) while fading
+                            x: wrapper.shown ? 0 : root.cardWidth + root.sideGap
+
+                            Behavior on x { NumberAnimation { duration: 380; easing.type: Easing.OutCubic } }
+                            Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.InOutQuad } }
 
                             HoverHandler { id: hh }
 
@@ -928,20 +991,12 @@ Scope {
                                 anchors.bottomMargin: root.px(5)
                                 height: 2
                                 radius: 1
-                                width: card.width - root.px(32)
+                                width: (card.width - root.px(32))*wrapper.lifeLeft
                                 color: wrapper.critical ? Theme.danger : Theme.alpha(Theme.text, 0.3)
                                 opacity: wrapper.expanded ? 0.15 : 1
                                 visible: !wrapper.persistent
 
-                                NumberAnimation on width {
-                                    id: progAnim
-                                    from: card.width - root.px(32)
-                                    to: 0
-                                    duration: wrapper.lifetime
-                                    running: !wrapper.leaving && !wrapper.persistent
-                                    paused: hh.hovered || wrapper.expanded
-                                    onFinished: wrapper.close(true)
-                                }
+
                             }
 
                             Row {
@@ -1044,68 +1099,7 @@ Scope {
             }
 
             // ======================= PANEL =====================================
-            Item {
-                id: dragHandle
-                visible: panel.visible
-                opacity: panel.opacity
-                height: root.px(14)
-                anchors { bottom: panel.top; left: panel.left; right: panel.right }
-
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: root.px(36)
-                    height: root.px(4)
-                    radius: height / 2
-                    color: Theme.text
-                    opacity: (dragArea.containsMouse || root.dragging) ? 0.35 : 0.1
-                    Behavior on opacity { NumberAnimation { duration: 150 } }
-                }
-
-                MouseArea {
-                    id: dragArea
-                    anchors.fill: parent
-                    enabled: root.panelOpen
-                    hoverEnabled: true
-                    acceptedButtons: Qt.LeftButton
-                    cursorShape: root.dragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor
-
-                    property real pressX: 0
-                    property real pressY: 0
-                    property real startX: 0
-                    property real startY: 0
-
-                    onPressed: function (mouse) {
-                        const p = dragArea.mapToItem(backdrop, mouse.x, mouse.y);
-                        pressX = p.x;
-                        pressY = p.y;
-                        startX = win.effX;   // start from where the panel is actually shown
-                        startY = win.effY;
-                        root.dragging = true;
-                    }
-
-                    onPositionChanged: function (mouse) {
-                        if (!root.dragging) return;
-                        const p = dragArea.mapToItem(backdrop, mouse.x, mouse.y);
-                        win.setPosition(startX + (p.x - pressX), startY + (p.y - pressY));
-                    }
-
-                    onReleased: {
-                        if (!root.dragging) return;
-                        root.dragging = false;
-                        stateTimer.restart();
-                    }
-
-                    onCanceled: {
-                        if (!root.dragging) return;
-                        root.dragging = false;
-                        stateTimer.restart();
-                    }
-
-                    onDoubleClicked: root.resetPosition()
-                }
-            }
-
-            Rectangle {
+Rectangle {
                 id: panel
                 width: Math.min(root.cardWidth, Math.max(0, win.width - root.px(16)))
                 height: panelCol.height + root.px(28)
@@ -1115,6 +1109,8 @@ Scope {
                 y: win.baseY + win.effY
                 opacity: win.reveal ? 1 : 0
                 visible: opacity > 0
+                scale:win.reveal?1:.96
+                Behavior on scale {NumberAnimation{duration:220;easing.type:Easing.OutCubic}}
 
                 Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.InOutQuad } }
 
@@ -1202,30 +1198,40 @@ Scope {
                         // keep the scroll position when the grouped model is rebuilt
                         property real keepY: 0
 
-        // Smooth scrolling inside a group: the leaving row fades out, the
-        // entering row fades in, everything else glides into place. Only
-        // active during a scroll so normal rebuilds don't flash.
-        add: root.animateRows ? addTrans : null
-        remove: root.animateRows ? removeTrans : null
-        displaced: root.animateRows ? displacedTrans : null
-        Transition {
-            id: addTrans
-            ParallelAnimation {
-                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 220; easing.type: Easing.OutCubic }
-                NumberAnimation { property: "scale"; from: 0.94; to: 1; duration: 220; easing.type: Easing.OutCubic }
-            }
-        }
-        Transition {
-            id: removeTrans
-            ParallelAnimation {
-                NumberAnimation { property: "opacity"; to: 0; duration: 160; easing.type: Easing.InCubic }
-                NumberAnimation { property: "scale"; to: 0.94; duration: 160; easing.type: Easing.InCubic }
-            }
-        }
-        Transition {
-            id: displacedTrans
-            NumberAnimation { properties: "y"; duration: 220; easing.type: Easing.OutCubic }
-        }
+                        // Smooth scrolling inside a group, with a clear direction:
+                        // the leaving row slips away first (up when scrolling to
+                        // older entries, down when scrolling to newer ones), then
+                        // the entering row slides in from the opposite side after a
+                        // short pause, while the rest glide into place. Only active
+                        // during a scroll so normal rebuilds don't flash.
+                        add: root.animateRows ? addTrans : null
+                        remove: root.animateRows ? removeTrans : null
+                        displaced: root.animateRows ? displacedTrans : null
+                        Transition {
+                            id: addTrans
+                            SequentialAnimation {
+                                // keep the new row invisible during the pause
+                                // (otherwise it would flash at full opacity first)
+                                PropertyAction { property: "opacity"; value: 0 }
+                                PropertyAction { property: "scale"; value: 0.92 }
+                                PauseAnimation { duration: 180 }
+                                ParallelAnimation {
+                                    NumberAnimation { property: "opacity"; to: 1; duration: 340; easing.type: Easing.OutCubic }
+                                    NumberAnimation { property: "scale"; to: 1; duration: 340; easing.type: Easing.OutCubic }
+                                }
+                            }
+                        }
+                        Transition {
+                            id: removeTrans
+                            ParallelAnimation {
+                                NumberAnimation { property: "opacity"; to: 0; duration: 220; easing.type: Easing.InCubic }
+                                NumberAnimation { property: "scale"; to: 0.92; duration: 220; easing.type: Easing.InCubic }
+                            }
+                        }
+                        Transition {
+                            id: displacedTrans
+                            NumberAnimation { properties: "y"; duration: 340; easing.type: Easing.OutCubic }
+                        }
                         Connections {
                             target: root
                             function onRowsAboutToRebuild() { list.keepY = list.contentY; }
@@ -1262,6 +1268,30 @@ Scope {
                             height: pad + (isHeader ? headerBox.height : (isPager ? pagerBox.height : itemBox.height))
 
                             Timer { id: copiedTimer; interval: 900; onTriggered: rowItem.copied = false }
+
+                            // ---------- staggered entry (when the panel opens) ----------
+                            property real enter: 1
+                            transform: Translate { y: (1 - rowItem.enter) * root.px(14) }
+
+                            function playEnter() {
+                                enterAnim.stop();
+                                rowItem.enter = 0;
+                                rowItem.opacity = 0;
+                                enterDelay.interval = 90 + Math.min(rowItem.index, 8) * 45;
+                                enterDelay.restart();
+                            }
+                            Component.onCompleted: { if (root.opening) rowItem.playEnter(); }
+
+                            Timer { id: enterDelay; onTriggered: enterAnim.start() }
+                            ParallelAnimation {
+                                id: enterAnim
+                                NumberAnimation { target: rowItem; property: "enter"; from: 0; to: 1; duration: 320; easing.type: Easing.OutCubic }
+                                NumberAnimation { target: rowItem; property: "opacity"; from: 0; to: 1; duration: 280; easing.type: Easing.OutCubic }
+                            }
+                            Connections {
+                                target: root
+                                function onPanelOpenChanged() { if (root.panelOpen) rowItem.playEnter(); }
+                            }
 
                             // ---------- group header ----------
                             Rectangle {
@@ -1348,14 +1378,6 @@ Scope {
                                 x: root.px(6)
                                 width: parent.width - root.px(6)
                                 height: root.px(22)
-
-                                Lbl {
-                                    anchors { left: parent.left; leftMargin: root.px(10); verticalCenter: parent.verticalCenter }
-                                    ui: root.ui
-                                    sz: 9
-                                    color: Theme.textDim
-                                    text: rowItem.summary + "  ·  scroll for more"
-                                }
                                 Row {
                                     anchors { right: parent.right; rightMargin: root.px(6); verticalCenter: parent.verticalCenter }
                                     spacing: root.px(4)
@@ -1389,6 +1411,14 @@ Scope {
                                 height: Math.max(root.px(52), textCol.implicitHeight + root.px(20))
                                 radius: root.px(12)
                                 color: Theme.alpha(Theme.text, rowItem.copied ? 0.2 : 0.06)
+
+                                // expand / collapse glides instead of jumping; content is
+                                // clipped only while the height is animating so tooltips
+                                // can still overflow the card the rest of the time
+                                clip: heightAnim.running
+                                Behavior on height {
+                                    NumberAnimation { id: heightAnim; duration: 220; easing.type: Easing.OutCubic }
+                                }
 
                                 // wheel scrolls through the group's entries; at either
                                 // end the event is passed on so the whole list scrolls
@@ -1503,7 +1533,7 @@ Scope {
                                         color: Theme.text
                                         selectionColor: Theme.alpha(Theme.text, 0.3)
                                         selectedTextColor: Theme.text
-                                        font.pixelSize: root.px(10)
+                                        font.pixelSize: Math.round(10 * root.ui * root.tx)
                                         Keys.onEscapePressed: root.panelOpen = false
                                         onSelectedTextChanged: selTimer.restart()
 
@@ -1533,28 +1563,33 @@ Scope {
                         }
                     }
                 }
-            }
 
-            Row {
-                id: sizeRow
-                anchors { top: panel.bottom; topMargin: 6; left: panel.left }
-                spacing: 2
-                width: root.panelOpen ? implicitWidth : 0
-                height: root.panelOpen ? implicitHeight : 0
-                visible: root.panelOpen
-                opacity: sizeHover.hovered ? 0.9 : 0.18
-
-                Behavior on opacity { NumberAnimation { duration: 150 } }
-                HoverHandler { id: sizeHover }
-
-                SizeBtn { text: "−"; width: 16; font.pixelSize: 12; onClicked: win.setSize(root.menuSize - 10) }
-                SizeBtn { text: "+"; width: 16; font.pixelSize: 12; onClicked: win.setSize(root.menuSize + 10) }
-                SizeBtn {
-                    text: "↺"
-                    width: 16
-                    font.pixelSize: 12
-                    visible: root.movedFromDefault
-                    onClicked: root.resetPosition()
+                // Topmost overlay for wheel shortcuts (same as todo.qml):
+                //   Ctrl  + scroll -> text size only
+                //   Shift + scroll -> component scale
+                // Plain scroll passes through so the list scrolls normally.
+                // Starts below the drag strip so the strip keeps its cursor.
+                MouseArea {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.top: parent.top
+                    anchors.topMargin: dragArea.height
+                    z: 100
+                    enabled: root.panelOpen
+                    acceptedButtons: Qt.NoButton   // never steals clicks
+                    onWheel: function (wheel) {
+                        var dy = wheel.angleDelta.y !== 0 ? wheel.angleDelta.y : wheel.angleDelta.x;
+                        if (wheel.modifiers & Qt.ControlModifier) {
+                            root.wheelText(dy);
+                            wheel.accepted = true;
+                        } else if (wheel.modifiers & Qt.ShiftModifier) {
+                            root.wheelScale(dy);
+                            wheel.accepted = true;
+                        } else {
+                            wheel.accepted = false;
+                        }
+                    }
                 }
             }
         }

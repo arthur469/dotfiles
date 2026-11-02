@@ -1,9 +1,20 @@
 #!/usr/bin/python3
 """Read mounted filesystem usage once per UUID; never mount a volume."""
-import json, os, subprocess
+import json, os, re, subprocess
+from pathlib import Path
 
 
-def volumes(devices, statvfs=os.statvfs):
+def autofs_mounts(mountinfo):
+    """Read kernel metadata only: querying an autofs path renews its idle time."""
+    mounts = []
+    for line in mountinfo.splitlines():
+        fields = line.split()
+        if ' - ' in line and line.split(' - ', 1)[1].split()[0] == 'autofs':
+            mounts.append(re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), fields[4]))
+    return mounts
+
+
+def volumes(devices, statvfs=os.statvfs, automounts=()):
     found = {}
     def visit(device, model=''):
         model = device.get('model') or model
@@ -15,7 +26,13 @@ def volumes(devices, statvfs=os.statvfs):
             mount = min(mounts, key=lambda p:(len(p),p)) if mounts else ''
             row = {'id':key,'device':device['path'],'label':device.get('label') or model or device['name'],
                    'mount':mount,'fstype':fstype,'mounted':False,'total':None,'used':None,'available':None,'percent':None}
-            if mount:
+            # Even cached statvfs on a mounted autofs target postpones expiration.
+            # lsblk supplies mounted state; capacity stays unknown without path access.
+            automounted = any(mount == base or mount.startswith(base.rstrip('/') + '/')
+                              for base in automounts) if mount else False
+            if mount and automounted:
+                row['mounted'] = True
+            if mount and not automounted:
                 try:
                     info = statvfs(mount)
                     row.update(mounted=True,total=info.f_blocks*info.f_frsize,
@@ -35,6 +52,6 @@ def volumes(devices, statvfs=os.statvfs):
 if __name__ == '__main__':
     try:
         data = subprocess.check_output(['lsblk','--json','--bytes','--output','NAME,PATH,FSTYPE,UUID,LABEL,MOUNTPOINTS,MODEL'],text=True,timeout=5)
-        print(json.dumps({'volumes':volumes(json.loads(data)['blockdevices']),'error':''},ensure_ascii=False))
+        print(json.dumps({'volumes':volumes(json.loads(data)['blockdevices'], automounts=autofs_mounts(Path('/proc/self/mountinfo').read_text())),'error':''},ensure_ascii=False))
     except (OSError,ValueError,subprocess.SubprocessError) as error:
         print(json.dumps({'volumes':[],'error':type(error).__name__}))

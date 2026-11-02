@@ -2,7 +2,7 @@
 
 These changes extend the existing 43PR bar and wallpaper picker. UI additions select French or English from the session locale; English is the fallback. They were developed with assistance from OpenAI Codex. Personal accounts, hardware profiles, device identities and live state are excluded from the public branch.
 
-- Hold and drag a module to place it beside another module in a row or column. Drag bubble padding to move the entire group; drop inside another bubble to merge groups. Right-click while holding a left-button drag to rotate the arrangement by 90 degrees, keeping glyphs upright. Holding and releasing without movement changes nothing. The selected bubble has an inset accent outline; the visible inner grip is only three logical pixels per edge. Nearby edges and centers show alignment guides.
+- Hold and drag a module to place it beside another module in a row or column. Drag bubble padding to move the entire group; drop inside another bubble to merge groups. Right-click while holding a left-button drag to rotate the arrangement by 90 degrees, keeping glyphs upright. Holding and releasing without movement changes nothing. The selected bubble has an inset accent outline; the along-bar end grips are three logical pixels, without extra transverse padding. Bubble cells retain the native two-logical-pixel resource spacing, adjusted to scale. Single modules and groups use the same content width, with the existing centred glyphs. The moving selection stays above other bubbles. Nearby edges and centers show alignment guides.
 - Neighbours reflow during insertion and Open apps expansion. Temporary expansion does not save displaced neighbour positions. Open apps prioritizes minimized windows, limits visible length and retains scrolling when space runs out.
 - The optional reserved-space plugin projects window geometry around visible bubbles while preserving the native dwindle/master tree. Native window order, swapping and resizing remain available. True fullscreen is exempt. Edge margin controls all four frame edges and bubble-to-window spacing. Turning reservation off restores native geometry.
 - The plugin is pinned to the exact Hyprland commit. Build explicitly using `.config/hypr/plugins/bubble-reserve/build.sh` in the repository after a Hyprland upgrade. No binary is downloaded or rebuilt automatically. Without a compatible binary the ordinary bar uses the standard exclusive zone; interior free-bubble reservation is unavailable.
@@ -36,7 +36,7 @@ Hold left-click and **wheel**, without Ctrl, to resize an individual component f
 
 Standalone symbols share a 16-logical-pixel reference square at normal bar scale. Their painted bounds are proportionally fitted and centred in each button, including supplementary Unicode glyphs; individual module scaling is applied afterwards. The notification count stays in a separate corner badge. Rotating a module from its contents preserves its orientation on release and the cursor grip; input rectangles follow free positions.
 
-Configs → Keybinds also lists the carousel directions, quick Alt+Tab switching, window opacity and reset, minimized-window actions and Super+mouse gestures. Fixed bindings remain read-only like native workspace shortcuts; derived opacity chords follow the editable base Opacity key. Quick actions use the same `kb_qa` identifier as Lua. Default fallbacks reserve Super+L for locking, Print for an area screenshot and Shift+Print for a full screenshot.
+Configs → Keybinds also lists the carousel directions, quick Alt+Tab switching, window opacity and reset, minimized-window actions and Super+mouse gestures. The carousel and quick switch use the existing editable binds.lua preferences; derived opacity chords follow the editable base Opacity key. Quick actions use the same `kb_qa` identifier as Lua. Upstream defaults remain Super+Tab for locking, Delete for fullscreen screenshots and Shift+Delete for area screenshots. Additional carousel and quick switch defaults are Alt+Tab and Alt+Escape. The personal branch overrides these separately.
 
 Contextual input routing requires plugin 0.3 or later, following the existing Opacity key in binds.lua and the actual bar surface instead of adding a second global Super+O command. Rebuild explicitly with its build.sh after plugin source updates, even when Hyprland itself is unchanged. X11 and Hyprcursor sizes now follow the same session value.
 
@@ -67,3 +67,26 @@ Shared module controls
 - Hold left-click and wheel targets the module from both its content and padding; outer background targets the bubble.
 - 100% opacity paints an opaque background. Module and bubble values remain independent.
 - Interactive regression: `tests/desktop/regression.py --allow-desktop`; captures/restores preferences and iterates input regions across all four bar positions. Coordinate with the user before running it.
+
+Escape closes settings after interacting with a control. In search, the first Escape clears the query and the next closes the window.
+
+Isolated checks keep complete private logs and print short summaries. Only compatible clean successes are reused; see `tests/desktop/README.md` for fingerprints, filters, exclusions and live-desktop limitations. `--coverage families` consolidates continuation/cancellation checks while retaining every integration and child input target.
+
+
+CPU/RAM/GPU/disk outlines fill their existing module without resizing it. Smooth digits use the clock’s reference size and shrink only when needed to fit. Clicking a persistent workspace with no valid output attaches it to the focused output. Day mode checks actual playback progress on visible desktops and recovers the same MP4 if its player responds but remains stuck; native pausing is retained for sleeping outputs and fullscreen desktops.
+
+
+Edge margin protects both sides of the axis normal to an attached edge: left/right on vertical edges, top/bottom on horizontal edges; an interior free-layout bubble keeps padding on all four sides. Corner reservations retain the attachment chosen during placement. CPU/RAM/GPU/disk counters keep the same width in Default and Compact modes; Default labels stack above the values, without requiring another zoom adjustment.
+
+
+Resource outlines keep a small lateral paint inset so the bubble background remains visible even when the disk badge is wider than its neighbours. This affects painting only; dimensions, zoom, text sizing and input regions are preserved.
+
+
+Choosing Floating, Joined or Strip in bar settings leaves free layout. Groups, cells and free coordinates are preserved; enabling Free layout restores them. After a Hyprland upgrade, explicitly rebuild the control/reservation plugin with `.config/hypr/plugins/bubble-reserve/build.sh` for the exact running version. Previous binaries remain available for rollback.
+
+
+## November 2 upstream integration
+
+Based on upstream `50bab24fd53d11c309a592e6fe393efba2bacaf4` (Hyprland 0.57). Native default preferences and all 70 native keyboard chords are protected by regression fixtures. Resource mode Native preserves upstream badge sizing, text, borders and symbols; Default and Compact remain optional. Temperature, calendar scale/animation, clock/settings click actions, battery test IPC, color picker and native keybind editor additions are retained. GPU consumers share one native smoothed probe.
+
+Both update scripts only fast-forward a clean tracked branch; divergence requires review in an isolated checkout. Wallpaper fill uses proportional native mpv panscan, with rendered pixel checks. The generic branch contains no personal live state. See [branch separation](../profiles/README.md).

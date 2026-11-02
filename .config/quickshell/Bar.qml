@@ -21,30 +21,75 @@ Scope {
     // ───────────────────────── Config ─────────────────────────
     // Single source of truth for defaults (used by the adapter AND reset).
     readonly property var defaults: ({
-        // layout
-        position: "left", style: "joined", thickness: 20, margin: 4,
-        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), groupRotations: ({}), groupOpacity: ({}), moduleOpacity: ({}), moduleScale: ({}), moduleZoom:1, moduleScaleVersion:2, autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
-        // appearance
-        scale: 1.0, bgOpacity: 0.5, border: false, radius: 16, calRadius: 15,
-        // tooltips
-        tooltips: true, tooltipHints: true, tipDelay: 450,
-        // modules
-        modPad: 20, wsDot: 10, wsGap: 8, wsScroll: true,
-        statsMode: "compact", statsWarn: 85, statsGpu: true, diskVolumes: [], batLowPct: 15,
-        volStep: 2, volMax: 100,
-        // clock / calendar
-        clock24: true, clockSeconds: false, weekMonday: true,
-        tasksCollapsed: false, taskIconSize: 18, taskMaxVisible: 5, moduleGroups: [],
-        // module placement
-        hidden: "cpu,ram,gpu,wall,settings,tasks",
-        startMods: "cpu,ram,gpu,ws",
-        centerMods: "clock",
-        endMods: "media,volume,battery,net,notif,wall,settings,power"
-    })
+        "position": "left",
+        "style": "joined",
+        "thickness": 20,
+        "margin": 4,
+        "reserveSpace": true,
+        "allScreens": true,
+        "moduleRegistryVersion": 1,
+        "freeLayout": false,
+        "groupCells": {},
+        "groupRotations": {},
+        "groupOpacity": {},
+        "moduleOpacity": {},
+        "moduleScale": {},
+        "moduleZoom": 1,
+        "moduleScaleVersion": 2,
+        "autoGroup": true,
+        "quickFloatRetile": false,
+        "windowGroupsEnabled": false,
+        "windowGroups": [],
+        "collapsedGroups": {},
+        "dropToMinimize": false,
+        "scale": 1,
+        "bgOpacity": 0.5,
+        "border": false,
+        "radius": 16,
+        "calRadius": 15,
+        "tooltips": true,
+        "tooltipHints": true,
+        "tipDelay": 450,
+        "modPad": 20,
+        "wsDot": 10,
+        "wsGap": 8,
+        "wsScroll": true,
+        "statsMode": "native",
+        "statsWarn": 85,
+        "statsGpu": true,
+        "diskVolumes": [],
+        "batLowPct": 15,
+        "volStep": 2,
+        "volMax": 100,
+        "clock24": true,
+        "clockSeconds": false,
+        "weekMonday": true,
+        "tasksCollapsed": false,
+        "taskIconSize": 18,
+        "taskMaxVisible": 5,
+        "moduleGroups": [],
+        "hidden": "cpu,ram,gpu,temp,wall,settings,tasks",
+        "startMods": "cpu,ram,gpu,temp,ws",
+        "centerMods": "clock",
+        "endMods": "media,volume,battery,net,notif,wall,settings,power",
+        "dragModules": true,
+        "barScale": 1,
+        "calScale": 1,
+        "statsPercent": false,
+        "statsScale": 1,
+        "statsBorder": true,
+        "tempWarn": 85,
+        "clockPrimary": "calendar",
+        "clockSecondary": "quickactions",
+        "clockTertiary": "settings",
+        "settingsPrimary": "settings",
+        "settingsSecondary": "barsettings",
+        "settingsTertiary": "none"
+})
     readonly property var positions: ["top", "right", "bottom", "left"]
     readonly property var styles: ["floating", "joined", "strip"]
     readonly property var sections: ["start", "center", "end"]
-    readonly property var statsModes: ["default", "compact"]
+    readonly property var statsModes: ["native", "default", "compact"]
 
     // Live config object, edited by BarPage (the settings page).
     readonly property var config: cfg
@@ -62,6 +107,20 @@ Scope {
 
         adapter: JsonAdapter {
             id: cfg
+            property bool dragModules: root.defaults.dragModules
+            property real barScale: root.defaults.barScale
+            property real calScale: root.defaults.calScale
+            property bool statsPercent: root.defaults.statsPercent
+            property real statsScale: root.defaults.statsScale
+            property bool statsBorder: root.defaults.statsBorder
+            property int tempWarn: root.defaults.tempWarn
+            property string clockPrimary: root.defaults.clockPrimary
+            property string clockSecondary: root.defaults.clockSecondary
+            property string clockTertiary: root.defaults.clockTertiary
+            property string settingsPrimary: root.defaults.settingsPrimary
+            property string settingsSecondary: root.defaults.settingsSecondary
+            property string settingsTertiary: root.defaults.settingsTertiary
+            property int moduleRegistryVersion:0
             property string position: root.defaults.position
             property string style: root.defaults.style
             property int thickness: root.defaults.thickness
@@ -124,6 +183,13 @@ Scope {
     function migrateDisks() {
         if(root.manipulating)return;
         const patch=StorageModules.upgrade(cfg,BarLayout.migrateScales);
+        const scale=BarLayout.migrateBarScale(JSON.parse(cfgFile.text()));
+        if(cfg.barScale!==scale.barScale||cfg.moduleZoom!==scale.moduleZoom)Object.assign(patch,scale);
+        if(cfg.moduleRegistryVersion<1){
+            const placed=[...cfg.moduleGroups.flatMap(g=>g.items||[]),...root.csv(cfg.startMods),...root.csv(cfg.centerMods),...root.csv(cfg.endMods)];
+            if(!placed.includes("temp")&&!root.csv(cfg.hidden).includes("temp"))patch.hidden=cfg.hidden+(cfg.hidden?",":"")+"temp";
+            patch.moduleRegistryVersion=1;
+        }
         if(Object.keys(patch).length)applyLayout(patch);
     }
 
@@ -134,22 +200,27 @@ Scope {
     readonly property bool vertical: cfg.position === "left" || cfg.position === "right"
     readonly property bool joined: cfg.style !== "floating"
     readonly property bool strip: cfg.style === "strip"
-    readonly property int bubblePadding: 3
-    readonly property int panelThick: Math.max(vertical ? cfg.thickness + 6 : cfg.thickness, isOn("tasks") ? Math.round(cfg.taskIconSize * cfg.scale) + 6 : 0)
+    readonly property int bubblePadding: s(3)
+    readonly property int moduleGap: s(2) // Native resource-lane spacing, shared by bubble cells.
+    readonly property int panelThick: Math.max(vertical ? cfg.thickness + 12 : cfg.thickness, isOn("tasks") ? Math.round(cfg.taskIconSize * cfg.scale) + 6 : 0)
     readonly property int effEdge: Math.round(cfg.margin*cfg.scale)
     readonly property int effGap: Math.round(cfg.margin*cfg.scale)
     readonly property real barRadius: strip ? 0 : cfg.radius
     readonly property color bgColor: Qt.alpha(Theme.bg, cfg.bgOpacity)
     readonly property color borderColor: Theme.accent
 
+    readonly property real bs: cfg.barScale
+    function cs(n) { return Math.round(n * cfg.scale * cfg.calScale); }
+    function cl(n) { return Math.round(n * cfg.calScale); }
+
     function s(n) { return Math.round(n * cfg.scale); }
 
     readonly property var sz: ({
         stat: s(12), clock: s(12), marquee: s(11),
-        icon: s(16), batIcon: s(13), batText: s(12), power: s(15),
+        icon: s(16), batIcon: s(13), batText: s(12), power: s(14),
         taskIcon: s(18),
-        calTime: s(30), calDate: s(12), calMonth: s(13), calArrow: s(16),
-        calWeekday: s(11), calDay: s(12)
+        calTime: cs(30), calDate: cs(12), calMonth: cs(13), calArrow: cs(16),
+        calWeekday: cs(11), calDay: cs(12)
     })
     readonly property int sizeIconGap: 12
     readonly property int iconYOffset: 1
@@ -209,6 +280,18 @@ Scope {
     }
 
     // ───────────────────────── Clock formatting ─────────────────────────
+    function actionHint(a) {
+        return a === "settings" ? "Settings"
+             : a === "barsettings" ? "Bar settings"
+             : a === "quickactions" ? "Quick actions" : "";
+    }
+
+    function doAction(a) {
+        if (a === "settings") run("qs ipc call settings toggle");
+        else if (a === "barsettings") openSettings();
+        else if (a === "quickactions") run("qs ipc call qa toggle");
+    }
+
     function clockText(d) {
         const h24 = d.getHours();
         const h12 = h24 % 12 || 12;
@@ -238,16 +321,24 @@ Scope {
     }
 
     // ───────────────────────── Battery ─────────────────────────
+    // ── TEST MODE ──
+    property bool batTest: false
+    property int batTestPct: 60
+    property bool batTestCharging: false
+
     readonly property var battery: UPower.devices.values.find(d => d.isLaptopBattery)
         ?? (UPower.displayDevice && UPower.displayDevice.isPresent
             && UPower.displayDevice.type === UPowerDeviceType.Battery
             ? UPower.displayDevice : null)
-    readonly property int batPct: battery ? Math.round(battery.percentage * 100) : 0
-    readonly property bool batCharging: battery !== null
-        && (battery.state === UPowerDeviceState.Charging
-            || battery.state === UPowerDeviceState.PendingCharge
-            || battery.state === UPowerDeviceState.FullyCharged)
-    readonly property bool batLow: battery !== null && !batCharging && batPct <= cfg.batLowPct
+    readonly property bool hasBattery: batTest || battery !== null
+    readonly property int batPct: batTest ? batTestPct
+                                          : battery ? Math.round(battery.percentage * 100) : 0
+    readonly property bool batCharging: batTest ? batTestCharging
+        : battery !== null
+          && (battery.state === UPowerDeviceState.Charging
+              || battery.state === UPowerDeviceState.PendingCharge
+              || battery.state === UPowerDeviceState.FullyCharged)
+    readonly property bool batLow: hasBattery && !batCharging && batPct <= cfg.batLowPct
     readonly property var batIcons: ["\uf244", "\uf243", "\uf242", "\uf241", "\uf240"]
     readonly property string batIcon: batIcons[batPct >= 90 ? 4 : batPct >= 65 ? 3 : batPct >= 40 ? 2 : batPct >= 15 ? 1 : 0]
 
@@ -273,6 +364,7 @@ Scope {
         { id: "cpu",    l: "CPU" },
         { id: "ram", l: "RAM" },
         { id: "gpu", l: "GPU" },
+        { id: "temp", l: LocaleState.tr("TEMPÉRATURES","TEMPERATURES") },
         { id: "ws",       l: "Workspaces" },
         { id: "tasks",    l: "Open apps" },
         { id: "media",    l: "Media" },
@@ -294,7 +386,7 @@ Scope {
     readonly property var moduleIds: moduleDefs.map(d => d.id)
     readonly property var defMap: moduleDefs.reduce((m, d) => { m[d.id] = d; return m; }, {})
     readonly property var comps: ({
-        opacity: opacityC, brightness: brightnessC, cpu: statsC, ram: statsC, gpu: statsC, ws: wsC, tasks: tasksC, media: mediaC, volume: volumeC, battery: batteryC, icon: iconC
+        opacity: opacityC, brightness: brightnessC, cpu: statsC, ram: statsC, gpu: statsC, temp: tempC, ws: wsC, tasks: tasksC, media: mediaC, volume: volumeC, battery: batteryC, icon: iconC
     })
 
     function csv(str) { return str === "" ? [] : str.split(","); }
@@ -313,9 +405,9 @@ Scope {
         if (!isOn(id)) return false;
         if (StorageModules.isDisk(id)) return cfg.diskVolumes.includes(StorageModules.volumeId(id));
         switch (id) {
-        case "cpu": case "ram": case "gpu": return true;
+        case "cpu": case "ram": case "gpu": case "temp": return true;
         case "media":   return Marquee.player !== null && Marquee.title !== "";
-        case "battery": return battery !== null;
+        case "battery": return hasBattery;
         default:        return true;
         }
     }
@@ -362,7 +454,14 @@ Scope {
     property double closedNativeToken:-1
     property point nativePressPoint:Qt.point(0,0)
     readonly property bool manipulating:!!dragItem||dragGroupId!==""||editOpen
-    function reservationRect(panel){const r=root.taskRect(panel),pad=BarLayout.edgePadding(r,panel.hostWindow.screen.width,panel.hostWindow.screen.height,root.effEdge,cfg.position);return Object.assign({},r,{gapX:pad.gapX,gapY:pad.gapY});}
+    function reservationRect(panel) {
+        const r=root.taskRect(panel),window=panel.hostWindow;
+        // Reuse the anchor chosen before the edge offset. Reclassifying the
+        // painted rectangle near a corner can switch to the perpendicular edge.
+        const placed=root.groupPositions(window,window.layoutFrame)[panel.groupId];
+        const pad=placed || BarLayout.edgePadding(r,window.screen.width,window.screen.height,root.effEdge,cfg.position);
+        return Object.assign({},r,{gapX:pad.gapX,gapY:pad.gapY});
+    }
     readonly property string reservedBubbleState: JSON.stringify({active:cfg.reserveSpace && barVisible && barLive,margin:root.effEdge,interactive:barVisible&&barLive&&!editOpen,modal:editOpen,
         minimized:taskButtons.filter(t=>t&&t.isMinimized&&t.visible).map(t=>({address:"0x"+t.hyprHandle.address.replace(/^0x/,""),geometry:root.taskRect(t)})),
         rectangles:bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>root.reservationRect(p))})
@@ -412,7 +511,7 @@ Scope {
     property real selectedScale:1
     function individualFactor(id){return BarLayout.moduleScale(cfg,id);}
     function moduleFactor(id){return individualFactor(id);}
-    function uniformScale(value){if(root.manipulating)return;cfgFile.waitForJob();applyLayout(BarLayout.uniformScale(value));}
+    function uniformScale(value){if(root.manipulating)return;cfgFile.waitForJob();applyLayout(Object.assign({},BarLayout.uniformScale(value),{barScale:Math.round(Math.max(.5,Math.min(2,value))*100)/100}));}
     function adjustSelection(delta,modifiers){
         if(gestureMode!==""&&gestureMode!=="size")return true;gestureMode="size";
         if(!dragItem&&!dragGroupId)return false;
@@ -701,6 +800,7 @@ Scope {
         layoutPriority=sectionOf(slot.modelData);layoutAxis=vertical?"y":"x";
     }
     function updateModuleDrag(slot,point) {
+        if(cfg.dragModules===false)return;
         if(dragItem!==slot || !dragWindow || opacityGesture)return;
         dragPoint=slot.mapToItem(dragWindow.contentItem,point.x,point.y);
         if(Math.hypot(dragPoint.x-dragStart.x,dragPoint.y-dragStart.y)>6){dragMoved=true;gestureMode="move";}
@@ -739,6 +839,7 @@ Scope {
         layoutPriority=panel.groupId;layoutAxis=vertical?"y":"x";processPopup.close();
     }
     function updateGroupDrag(panel,point) {
+        if(cfg.dragModules===false)return;
         if(dragGroupId!==panel.groupId || opacityGesture)return;
         dragPoint=panel.mapToItem(dragWindow.contentItem,point.x,point.y);
         if(Math.hypot(dragPoint.x-dragStart.x,dragPoint.y-dragStart.y)>6){dragMoved=true;gestureMode="move";}
@@ -767,10 +868,12 @@ Scope {
             let y=group.y!==undefined?group.y*Math.max(0,frame.height-height):vertical?group.position*(frame.height-height):(cfg.position==="bottom"?frame.height-height:0);
             if(!cfg.freeLayout){x=vertical?0:group.position*(frame.width-width);y=vertical?group.position*(frame.height-height):0;}
             if(group.id===dragGroupId && dragWindow===window && dragMoved){x=dragPoint.x-width*dragGripRatio.x-frame.x;y=dragPoint.y-height*dragGripRatio.y-frame.y;}
-            if(cfg.freeLayout){const pad=BarLayout.edgePadding({x:x,y:y,width:width,height:height},frame.width,frame.height,effEdge,cfg.position);if(pad.edge==="left")x=effEdge;else if(pad.edge==="right")x=frame.width-width-effEdge;else if(pad.edge==="top")y=effEdge;else if(pad.edge==="bottom")y=frame.height-height-effEdge;}
-            rectangles.push({id:group.id,x:x,y:y,width:width,height:height,order:vertical?(group.y===undefined?group.position:group.y):(group.x===undefined?group.position:group.x)});
+            const pad=cfg.freeLayout ? BarLayout.edgePadding({x:x,y:y,width:width,height:height},frame.width,frame.height,effEdge,cfg.position)
+                                    : {gapX:vertical?effEdge:0,gapY:vertical?0:effEdge};
+            if(cfg.freeLayout){if(pad.edge==="left")x=effEdge;else if(pad.edge==="right")x=frame.width-width-effEdge;else if(pad.edge==="top")y=effEdge;else if(pad.edge==="bottom")y=frame.height-height-effEdge;}
+            rectangles.push({id:group.id,x:x,y:y,width:width,height:height,gapX:pad.gapX,gapY:pad.gapY,order:vertical?(group.y===undefined?group.position:group.y):(group.x===undefined?group.position:group.x)});
         }
-        if(dragItem && dragWindow===window && dragMoved && !mergePanel)rectangles.push({id:"__module-drag",x:dragPoint.x-moduleGrip.x-frame.x-root.bubblePadding,y:dragPoint.y-moduleGrip.y-frame.y-root.bubblePadding,width:dragItem.width+2*root.bubblePadding,height:dragItem.height+2*root.bubblePadding});
+        if(dragItem && dragWindow===window && dragMoved && !mergePanel)rectangles.push({id:"__module-drag",x:dragPoint.x-moduleGrip.x-frame.x-(dragItem.moduleVertical?0:root.bubblePadding),y:dragPoint.y-moduleGrip.y-frame.y-(dragItem.moduleVertical?root.bubblePadding:0),width:dragItem.width+(dragItem.moduleVertical?0:2*root.bubblePadding),height:dragItem.height+(dragItem.moduleVertical?2*root.bubblePadding:0)});
         const moving=rectangles.find(r=>r.id===(dragGroupId||"__module-drag"));
         if(moving && cfg.freeLayout && dragMoved && !mergePanel){const snap=BarLayout.snap(moving,rectangles.filter(r=>r!==moving),frame.width,frame.height,10);moving.x=snap.x;moving.y=snap.y;guides=snap.guides;}
         let axis=layoutAxis;
@@ -818,7 +921,7 @@ Scope {
         function inputTraceState():string{return JSON.stringify(root.inputTrace);}
         function interactionState(): string {return JSON.stringify(root.interactionTargets());}
         function layoutState(): string {
-            return JSON.stringify({gestureMode:root.gestureMode,moduleRotation:root.dragModuleRotation,moved:root.dragMoved,groupRotations:cfg.groupRotations,appDragging:root.appDragItem!==null,freeLayout:cfg.freeLayout,reserveSpace:cfg.reserveSpace,nativeReservation:root.nativeReservation,nativeControlBridge:root.nativeControlBridge,nativeInputBridge:root.nativeInputBridge,manipulating:root.manipulating,processPopupOpen:processPopup.opened,input:{discardClick:root.discardReleaseClick,kind:root.lastNativeKind,delta:root.lastNativeDelta,left:root.nativeLeftHeld,token:root.nativeInputToken},editor:{sizeInput:root.editorRect(preciseSize.inputItem()),opacityInput:root.editorRect(preciseOpacity.inputItem()),buttons:[0,1,2].map(i=>root.editorRect(editorActions.itemAt(i))),x:root.editPoint.x,y:root.editPoint.y,width:precisePanel.cardWidth,height:precisePanel.cardHeight,open:root.editOpen,scope:root.editScope,id:root.editId,mode:root.editMode,size:root.editorValue("size"),opacity:root.editorValue("opacity")},zoom:cfg.moduleZoom,groupDrag:root.dragGroupId,mergeTarget:root.mergePanel?root.mergePanel.groupId:"",locale:LocaleState.language,date:LocaleState.locale.toString(new Date(),"dddd, d MMMM yyyy"),groups:root.layoutGroups,panels:root.bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>({id:p.groupId,selected:root.dragGroupId===p.groupId,border:p.border.width,opacity:root.groupAlpha(p.groupId),geometry:root.taskRect(p),items:p.model})),calendars:root.calendarControllers.filter(c => c && c.clockTarget).map(c => ({open:c.calOpen,geometry:root.taskRect(c.clockTarget)})),dragging:root.dragItem ? root.dragItem.modelData : "",
+            return JSON.stringify({dragVisual:root.dragWindow?root.dragWindow.dragVisual:null,gestureMode:root.gestureMode,moduleRotation:root.dragModuleRotation,moved:root.dragMoved,groupRotations:cfg.groupRotations,appDragging:root.appDragItem!==null,freeLayout:cfg.freeLayout,reserveSpace:cfg.reserveSpace,nativeReservation:root.nativeReservation,nativeControlBridge:root.nativeControlBridge,nativeInputBridge:root.nativeInputBridge,manipulating:root.manipulating,processPopupOpen:processPopup.opened,input:{discardClick:root.discardReleaseClick,kind:root.lastNativeKind,delta:root.lastNativeDelta,left:root.nativeLeftHeld,token:root.nativeInputToken},editor:{sizeInput:root.editorRect(preciseSize.inputItem()),opacityInput:root.editorRect(preciseOpacity.inputItem()),buttons:[0,1,2].map(i=>root.editorRect(editorActions.itemAt(i))),x:root.editPoint.x,y:root.editPoint.y,width:precisePanel.cardWidth,height:precisePanel.cardHeight,open:root.editOpen,scope:root.editScope,id:root.editId,mode:root.editMode,size:root.editorValue("size"),opacity:root.editorValue("opacity")},zoom:cfg.moduleZoom,groupDrag:root.dragGroupId,mergeTarget:root.mergePanel?root.mergePanel.groupId:"",locale:LocaleState.language,date:LocaleState.locale.toString(new Date(),"dddd, d MMMM yyyy"),groups:root.layoutGroups,panels:root.bubblePanels.filter(p=>p&&p.hostWindow&&p.visible).map(p=>({id:p.groupId,z:p.z,selected:root.dragGroupId===p.groupId,border:p.border.width,opacity:root.groupAlpha(p.groupId),geometry:root.taskRect(p),items:p.model})),calendars:root.calendarControllers.filter(c => c && c.clockTarget).map(c => ({open:c.calOpen,geometry:root.taskRect(c.clockTarget)})),dragging:root.dragItem ? root.dragItem.modelData : "",
                 modules:root.moduleSlots.filter(s => s && s.hostWindow).map(s => ({id:s.modelData,holding:s.holding,size:root.moduleFactor(s.modelData),pressed:s.item&&s.item.debugPressed!==undefined?s.item.debugPressed:false,hovered:s.item&&s.item.hovered!==undefined?s.item.hovered:false,itemSize:s.item?{width:s.item.width,height:s.item.height}:null,opacity:root.moduleAlpha(s.modelData),vertical:s.moduleVertical,geometry:root.taskRect(s)}))});
         }
         function nativeAppDrag(address:string,token:string):void {
@@ -863,6 +966,9 @@ Scope {
         function setStyle(st: string): void {
             if (root.styles.indexOf(st) >= 0) { cfg.style = st; root.save(); }
         }
+        function batteryTest(on: bool): void { root.batTest = on; }
+        function batteryLevel(pct: int): void { root.batTestPct = Math.max(0, Math.min(100, pct)); }
+        function batteryCharging(on: bool): void { root.batTestCharging = on; }
         function setStatsMode(mode: string): void {
             if (root.statsModes.indexOf(mode) >= 0) { cfg.statsMode = mode; root.save(); }
         }
@@ -915,6 +1021,35 @@ Scope {
             root.memTotalG = total / 1048576;
         }
     }
+
+    property int cpuTemp: -1
+    readonly property int gpuTemp: !isNaN(parseFloat(GpuStats.fields[1])) ? Math.round(parseFloat(GpuStats.fields[1])) : -1
+    function tempText(value) { return value >= 0 ? String(value) : "—"; }
+    function tempTip(name,value) { return value >= 0 ? name+LocaleState.tr(" : ",": ")+value+"°C" : name+LocaleState.tr(" : température indisponible",": temperature unavailable"); }
+    function tempFromSensors(lines, keys) {
+        for (const k of keys) {
+            for (const l of lines) {
+                const line = l.trim();
+                if (line.indexOf(k) !== 0) continue;
+                const m = line.match(/([+-]?\d+(?:\.\d+)?)\s*°/);
+                if (m) return Math.round(parseFloat(m[1]));
+            }
+        }
+        return -1;
+    }
+    Process {
+        // single `sensors` call serves CPU temp and the GPU temp fallback
+        id: sensorsProc
+        command: ["sensors"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const lines = text.split("\n");
+                root.cpuTemp = root.tempFromSensors(lines, ["Package id 0:", "Tctl:", "Tdie:"]);
+
+            }
+        }
+    }
+    Timer { interval:2000;running:root.barVisible&&root.isOn("temp");repeat:true;triggeredOnStart:true;onTriggered:if(!sensorsProc.running)sensorsProc.running=true }
 
     // Notification count: the notifications panel persists its history here
     property int notifCount: 0
@@ -1077,6 +1212,7 @@ Scope {
         property bool disabled: false          // dimmed, ignores input, tooltip explains why
         property bool interactive: true        // false → informational only (no hover tint / pointer)
         property bool restoreDragEligible: false
+        property bool noSecondary:false
         property bool noTip: false             // never show a tooltip for this element
         signal primary()
         signal secondary()
@@ -1090,13 +1226,14 @@ Scope {
             if (!cfg.tooltipHints) return "";
             const l = [];
             if (primaryHint !== "") l.push("Left click: " + primaryHint);
-            l.push("Right click: " + (secondaryHint !== "" ? secondaryHint : "Quick actions"));
+            if(!noSecondary)l.push("Right click: " + (secondaryHint !== "" ? secondaryHint : "Quick actions"));
             if (tertiaryHint !== "") l.push("Middle click: " + tertiaryHint);
             if (scrollHint !== "") l.push("Scroll: " + scrollHint);
             return l.join("\n");
         }
 
         function secondaryAction() {
+            if(noSecondary)return;
             if (secondaryHint !== "") secondary();
             else root.openSettings();
         }
@@ -1192,10 +1329,20 @@ Scope {
 
         readonly property bool iconOnly:mod.textIsIcon||(mod.shownGlyph!==""&&mod.shown==="")
         Layout.alignment: Qt.AlignCenter
-        implicitWidth: mod.moduleVertical ? root.panelThick : (mod.iconOnly?soloIcon.implicitWidth:content.implicitWidth) + padX
-        implicitHeight: mod.moduleVertical ? (mod.iconOnly ? Math.max(root.panelThick, root.sz.icon + 8) : Math.max(20, content.implicitHeight + 8))
-                                      : Math.max(root.panelThick - 2, mod.iconOnly ? soloIcon.implicitHeight : content.implicitHeight)
+        implicitWidth: mod.moduleVertical ? root.panelThick : (mod.iconOnly?nativeIconLine.implicitWidth:content.implicitWidth) + padX
+        implicitHeight: mod.moduleVertical ? (mod.iconOnly ? Math.max(20, nativeIconLine.implicitHeight + 8) : Math.max(20, content.implicitHeight + 8))
+                                      : Math.max(root.panelThick - 2, mod.iconOnly ? nativeIconLine.implicitHeight : content.implicitHeight)
 
+
+        // Keep 43PR's native line metrics for the input box while the painted
+        // glyph remains normalized and centred independently.
+        Text {
+            id:nativeIconLine;visible:false
+            text:mod.shownGlyph!==""?mod.shownGlyph:mod.shown
+            font.family:Theme.iconFont
+            font.pixelSize:mod.shownGlyph!==""?mod.glyphSize:mod.baseSize
+            renderType:Text.NativeRendering
+        }
 
         // Centre the painted glyph, not its font advance or line box. A shared
         // square normalises reference size without stretching the aspect ratio.
@@ -1293,32 +1440,39 @@ Scope {
     // One of the three bar sections: a rounded panel holding a Lane of Slots
     component Panel: Rectangle {
         id: panel
+        z: root.dragGroupId===groupId ? 1000 : 0
         readonly property var hostWindow: QsWindow.window
         property string groupId: ""
         property var model: []
         property Component clockComp: null
         readonly property bool rotatedVertical: root.vertical !== (!!((cfg.groupRotations[groupId]||0)%2))
-        property Region inputRegion: Region { x:panel.x+panel.parent.x;y:panel.y+panel.parent.y;width:panel.width;height:panel.height }
+        // Region uses integer coordinates. Cover the entire fractional painted
+        // rectangle; truncating origin and size can cut off its last pixel.
+        property Region inputRegion: Region {
+            x:Math.floor(panel.x+panel.parent.x);y:Math.floor(panel.y+panel.parent.y)
+            width:Math.ceil(panel.x+panel.parent.x+panel.width)-x
+            height:Math.ceil(panel.y+panel.parent.y+panel.height)-y
+        }
         readonly property var cellMap: root.mergePanel===panel?root.previewCells:BarLayout.cells(cfg,{id:groupId,items:model},root.vertical)
         readonly property var baseMetrics: {
             const entries=[];
             for(const slot of root.moduleSlots){if(!slot || slot.hostWindow!==hostWindow || !root.modVisible(slot.modelData) || !model.includes(slot.modelData))continue;
                 const task=slot.item&&slot.item.requestedLength!==undefined;
                 entries.push({id:slot.modelData,width:task?slot.item.baseWidth*slot.sizeFactor:slot.implicitWidth,height:task?slot.item.baseHeight*slot.sizeFactor:slot.implicitHeight});}
-            return BarLayout.measure(BarLayout.cells(cfg,{id:groupId,items:model},root.vertical),entries,0);
+            return BarLayout.measure(BarLayout.cells(cfg,{id:groupId,items:model},root.vertical),entries,root.moduleGap);
         }
         readonly property var metrics: {
             const entries=[];
             for(const slot of root.moduleSlots){if(!slot || slot.hostWindow!==hostWindow || !root.modVisible(slot.modelData))continue;
                 const own=model.includes(slot.modelData),ghost=root.mergePanel===panel&&root.previewCells[slot.modelData];
                 if((own || ghost) && !(root.dragMoved&&root.dragItem===slot&&root.mergePanel!==panel&&model.length>1))entries.push({id:slot.modelData,width:slot.implicitWidth,height:slot.implicitHeight});}
-            return BarLayout.measure(cellMap,entries,0);
+            return BarLayout.measure(cellMap,entries,root.moduleGap);
         }
         Component.onCompleted: root.bubblePanels=root.bubblePanels.filter(p=>p&&p.objectName!==undefined).concat([panel])
         Component.onDestruction: {root.bubblePanels=root.bubblePanels.filter(p=>p!==panel);if(root.dragGroupId===panel.groupId&&root.dragWindow===panel.hostWindow)root.cancelModuleDrag();if(root.editTarget===panel)root.closeEditor(false);}
         visible: metrics.width>0 && metrics.height>0
-        width: Math.max(rotatedVertical?root.panelThick:0,metrics.width+2*root.bubblePadding)
-        height: Math.max(!rotatedVertical?root.panelThick:0,metrics.height+2*root.bubblePadding)
+        width: metrics.width+(rotatedVertical?0:2*root.bubblePadding)
+        height: metrics.height+(rotatedVertical?2*root.bubblePadding:0)
         opacity:root.dragMoved&&root.dragItem&&model.length===1&&model[0]===root.dragItem.modelData?0:1
         radius: root.barRadius
         color: "transparent"
@@ -1421,6 +1575,7 @@ Scope {
             property var def: root.defMap[mid] ?? ({})
             readonly property bool isNet: mid === "net"
             readonly property bool isNotif: mid === "notif"
+            readonly property bool isSettings: mid === "settings"
             onIsNotifChanged: {
                 if (!root.notificationController) return;
                 if (isNotif) root.notificationController.registerBarButton(ic);
@@ -1444,12 +1599,18 @@ Scope {
             yOffset: root.iconYOffset
             text: isNet ? root.netGlyph : (def.g ?? "")
             tip: isNet ? root.netTip : mid === "notif" ? root.notifTip : (def.tip ?? "")
-            primaryHint: def.hint ?? ""
+            primaryHint: isSettings ? root.actionHint(cfg.settingsPrimary) : (def.hint ?? "")
+            secondaryHint: isSettings ? root.actionHint(cfg.settingsSecondary) : ""
+            tertiaryHint: isSettings ? root.actionHint(cfg.settingsTertiary) : ""
+            noSecondary:isSettings && cfg.settingsSecondary==="none"
+            onSecondary:if(isSettings)root.doAction(cfg.settingsSecondary)
+            onTertiary:if(isSettings)root.doAction(cfg.settingsTertiary)
             warning: isNet && root.netState === "disconnected"
             onPrimary: {
                 if (isNotif && root.notificationController) root.notificationController.toggleFromBar(ic);
                 else if (mid === "power" && root.powerController) root.powerController.toggleFromBar(ic);
                 else if (mid === "brightness" && root.volumeController) root.volumeController.showBrightness(ic);
+                else if (isSettings) root.doAction(cfg.settingsPrimary);
                 else if (def.cmd) root.run(def.cmd);
             }
 
@@ -1484,33 +1645,48 @@ Scope {
         id: stat
         property string label: ""
         property string value: "—"
+        property string unit: "%"
+        readonly property string shownValue:value+(cfg.statsPercent && value!=="—" ? unit : "")
         readonly property bool moduleVertical:root.moduleIsVertical(stat)
+        readonly property bool nativeStyle:cfg.statsMode === "native"
         readonly property bool compact:cfg.statsMode === "compact"
         readonly property color fg:warning ? Theme.danger : Theme.text
-        readonly property int fontPx:Math.round(root.sz.taskIcon * 0.5)
+        readonly property int fontPx:Math.max(6,Math.round(root.sz.taskIcon * 0.5 * (stat.nativeStyle?cfg.statsScale:1)))
         Layout.alignment:Qt.AlignCenter
-        implicitWidth:moduleVertical ? Math.max(root.panelThick,badge.width + 8) : badge.width + 8
-        implicitHeight:moduleVertical ? badge.height + 8 : Math.max(root.panelThick - 2,badge.height + 6)
+        // Both modes keep the compact width; a label needs only extra height.
+        readonly property real naturalBadgeWidth:stat.nativeStyle ? (stat.moduleVertical?Math.max(root.sz.taskIcon+6,statRow.implicitWidth+8):statRow.implicitWidth+14) : root.sz.taskIcon
+        readonly property real naturalBadgeHeight:stat.nativeStyle ? (stat.moduleVertical?statRow.implicitHeight+10:Math.max(root.sz.taskIcon,statRow.implicitHeight+6)) : (compact ? root.sz.taskIcon : statRow.implicitHeight + 10)
+        implicitWidth:moduleVertical ? (stat.nativeStyle?root.panelThick:Math.max(root.panelThick,naturalBadgeWidth + 8)) : naturalBadgeWidth + 8
+        implicitHeight:moduleVertical ? naturalBadgeHeight + 8 : Math.max(root.panelThick - 2,naturalBadgeHeight + 6)
         Rectangle {
             id: badge
-            anchors.centerIn: parent
-            // compact: circle the size of an app icon
-            // default: capsule sized to its label + number
-            width: stat.compact ? root.sz.taskIcon
-                 : stat.moduleVertical ? root.sz.taskIcon + 6
-                 : statRow.implicitWidth + 14
-            height: stat.compact ? root.sz.taskIcon
-                  : stat.moduleVertical ? statRow.implicitHeight + 10
-                  : root.sz.taskIcon
+            objectName: "resource-badge-surface"
+            anchors.fill: stat.nativeStyle ? null : parent
+            anchors.centerIn: stat.nativeStyle ? parent : null
+            width:stat.nativeStyle?stat.naturalBadgeWidth:parent.width
+            height:stat.nativeStyle?stat.naturalBadgeHeight:parent.height
+            // Keep the bubble's lateral background visible even for its widest
+            // badge. This changes paint only, never Slot metrics or hit areas.
+            anchors.leftMargin: !stat.nativeStyle && stat.moduleVertical ? root.s(1) : 0
+            anchors.rightMargin: !stat.nativeStyle && stat.moduleVertical ? root.s(1) : 0
+            anchors.topMargin: !stat.nativeStyle && !stat.moduleVertical ? root.s(1) : 0
+            anchors.bottomMargin: !stat.nativeStyle && !stat.moduleVertical ? root.s(1) : 0
             radius: Math.min(width, height) / 2
             color: Qt.alpha(stat.fg, 0.045)
-            border.width: 1
+            border.width: cfg.statsBorder ? 1 : 0
             border.color: Qt.alpha(stat.fg, 0.18)
 
             GridLayout {
                 id: statRow
-                anchors.centerIn: parent
-                flow: stat.moduleVertical ? GridLayout.TopToBottom : GridLayout.LeftToRight
+                objectName: "resource-badge-content"
+                transformOrigin: Item.TopLeft
+                x: (badge.width-width*scale)/2
+                y: (badge.height-height*scale)/2
+                // A transform leaves implicit metrics and hit areas unchanged.
+                scale: stat.nativeStyle ? 1 : Math.min(root.sz.clock * cfg.statsScale / stat.fontPx,
+                                Math.max(1,stat.width-2*root.s(2))/Math.max(1,implicitWidth),
+                                Math.max(1,stat.height-2*root.s(2))/Math.max(1,implicitHeight))
+                flow: stat.nativeStyle && !stat.moduleVertical ? GridLayout.LeftToRight : GridLayout.TopToBottom
                 rowSpacing: 0
                 columnSpacing: 4
 
@@ -1521,16 +1697,18 @@ Scope {
                     color: Qt.alpha(stat.fg, 0.75)
                     font.family: Theme.iconFont
                     font.pixelSize: stat.fontPx - 1
-                    renderType: Text.NativeRendering
+                    renderType: stat.nativeStyle ? Text.NativeRendering : Text.QtRendering
+                    antialiasing: true
                 }
                 Text {
                     Layout.alignment: Qt.AlignCenter
-                    text: stat.value
+                    text: stat.shownValue
                     color: stat.fg
                     font.family: Theme.iconFont
                     font.bold: true
                     font.pixelSize: stat.fontPx
-                    renderType: Text.NativeRendering
+                    renderType: stat.nativeStyle ? Text.NativeRendering : Text.QtRendering
+                    antialiasing: true
                 }
             }
         }
@@ -1561,12 +1739,21 @@ Scope {
         ResourceBadge {
             property string mid: ""
             readonly property var volume:DiskStats.volume(StorageModules.volumeId(mid))
-            label:LocaleState.tr("DSQ","DSK")
+            unit:"%";label:LocaleState.tr("DSQ","DSK")
             value:volume.mounted ? String(volume.percent) : "—"
             warning:volume.mounted && volume.percent >= cfg.statsWarn
             tip:DiskStats.description(volume)
             primaryHint:LocaleState.tr("Choisir les disques","Choose disks")
             onPrimary:root.run("qs ipc -p ~/.config/quickshell call settings bar")
+        }
+    }
+
+    Component {
+        id: tempC
+        ResourceBadge {
+            label:"TEMP";unit:root.cpuTemp>=0?"°":"";value:root.tempText(root.cpuTemp)
+            warning:root.cpuTemp>=cfg.tempWarn;tip:root.tempTip("CPU",root.cpuTemp)
+            onPrimary:root.openSettings()
         }
     }
 
@@ -1577,6 +1764,18 @@ Scope {
             readonly property bool moduleVertical: root.moduleIsVertical(workspaceModule)
             property var pressedSlot:null
             function slotParent(){let p=parent;while(p){if(p.moduleSlotMarker===true)return p;p=p.parent;}return null;}
+            function activateWorkspace(workspace) {
+                if (!workspace || workspace.id <= 0) return;
+                // A persistent workspace can outlive the output it was bound to.
+                if (!workspace.monitor || !Hyprland.monitors.values.some(m => m.id === workspace.monitor.id)
+                        || (workspace.lastIpcObject && workspace.lastIpcObject.monitorID === null)) {
+                    const monitor = Hyprland.focusedMonitor;
+                    if (!monitor) return;
+                    Hyprland.dispatch("hl.dsp.workspace.move({ workspace = " + workspace.id
+                                      + ", monitor = " + JSON.stringify(monitor.name) + " })");
+                }
+                Hyprland.dispatch("hl.dsp.focus({ workspace = " + workspace.id + " })");
+            }
             implicitWidth: workspaceModule.moduleVertical ? root.panelThick : wsLane.implicitWidth + 12
             implicitHeight: wsLane.implicitHeight + (workspaceModule.moduleVertical ? 12 : 0)
 
@@ -1620,7 +1819,7 @@ Scope {
                             onClicked: mouse => {
                                 if(root.interactionTesting||root.discardReleaseClick||root.manipulating||Date.now()<root.ignoreClickUntil)return;
                                 if (mouse.button === Qt.RightButton) root.openSettings();
-                                else Hyprland.dispatch("hl.dsp.focus({ workspace = " + dot.modelData.id + " })");
+                                else workspaceModule.activateWorkspace(dot.modelData);
                             }
                         }
 
@@ -1978,6 +2177,7 @@ Scope {
             required property var modelData
             screen: modelData
             readonly property Item layoutFrame: frame
+            readonly property var dragVisual:({visible:moduleDragPreview.visible,z:moduleDragPreview.z})
 
             anchors {
                 top: cfg.freeLayout || cfg.position !== "bottom"
@@ -2025,9 +2225,30 @@ Scope {
                     Component.onDestruction: root.calendarControllers = root.calendarControllers.filter(c => c !== clockPanel)
                     property bool calOpen: false
                     property int monthOffset: 0
+                    property Item clockItem: null     // the live clock module (wherever it was placed)
 
+                    // The popup window stays mounted for a moment after the calendar is
+                    // closed so the close animation can play (same idea as the
+                    // notification panel). Must outlast the longest calendar animation.
+                    property bool calMounted: false
+                    Timer {
+                        id: calUnmountTimer
+                        interval: 260
+                        onTriggered: clockPanel.calMounted = false
+                    }
+                    onCalOpenChanged: {
+                        if (calOpen) {
+                            calUnmountTimer.stop();
+                            calMounted = true;
+                        } else {
+                            calUnmountTimer.restart();
+                        }
+                    }
+
+                    // The clock is only needed while the module is enabled.
                     SystemClock {
                         id: clk
+                        enabled: root.isOn("clock")
                         precision: cfg.clockSeconds ? SystemClock.Seconds : SystemClock.Minutes
                     }
 
@@ -2043,21 +2264,24 @@ Scope {
                             vtext: root.clockVText(clk.date)
                             active: clockPanel.calOpen
                             tip: LocaleState.locale.toString(clk.date, "dddd, d MMMM yyyy")
-                            primaryHint: clockPanel.calOpen ? "Close calendar" : "Open calendar"
-                            secondaryHint: "Quick actions"
-                            tertiaryHint: "Settings"
-                            onPrimary: {
-                                                        clockPanel.monthOffset = 0;
-                                clockPanel.calOpen = !clockPanel.calOpen;
-                            }
-                            onSecondary: root.run("qs ipc call qa toggle")
-                            onTertiary: root.run("qs ipc call settings toggle")
+                            function hintFor(action) { return action==="calendar" ? (clockPanel.calOpen ? LocaleState.tr("Fermer le calendrier","Close calendar") : LocaleState.tr("Ouvrir le calendrier","Open calendar")) : root.actionHint(action); }
+                            function act(action) { if(action==="calendar"){clockPanel.monthOffset=0;clockPanel.calOpen=!clockPanel.calOpen;}else root.doAction(action); }
+                            primaryHint:hintFor(cfg.clockPrimary)
+                            secondaryHint:hintFor(cfg.clockSecondary)
+                            tertiaryHint:hintFor(cfg.clockTertiary)
+                            onPrimary:act(cfg.clockPrimary)
+                            onSecondary:act(cfg.clockSecondary)
+                            onTertiary:act(cfg.clockTertiary)
+                            onVisibleChanged:if(!visible)clockPanel.calOpen=false
                         }
                     }
                     LazyLoader {
-                        active: clockPanel.calOpen && clockPanel.clockTarget !== null
+                        active: clockPanel.calMounted && root.isOn("clock") && clockPanel.clockTarget !== null
 
                         PopupWindow {
+                            id:calWin
+                            property bool reveal:false
+                            Component.onCompleted:Qt.callLater(()=>{calWin.reveal=Qt.binding(()=>clockPanel.calOpen);})
                             readonly property point p: clockPanel.clockTarget ? bar.contentItem.mapFromItem(clockPanel.clockTarget, 0, 0) : Qt.point(0,0)
 
                             anchor.window: bar
@@ -2082,10 +2306,39 @@ Scope {
                                 border.width: cfg.border ? 1 : 0
                                 border.color: root.borderColor
 
+                                // Grows out of the edge facing the bar (and shrinks back into
+                                // it on close), so it works for every bar position:
+                                //   top    → from the top edge, centered
+                                //   bottom → from the bottom edge, centered
+                                //   left   → from the left edge, centered
+                                //   right  → from the right edge, centered
+                                property real grow: calWin.reveal ? 1 : 0.3
+                                Behavior on grow {
+                                    NumberAnimation {
+                                        duration: calWin.reveal ? 220 : 140
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+                                opacity: calWin.reveal ? 1 : 0
+                                Behavior on opacity {
+                                    NumberAnimation {
+                                        duration: calWin.reveal ? 180 : 120
+                                        easing.type: Easing.InOutQuad
+                                    }
+                                }
+                                transform: Scale {
+                                    origin.x: root.vertical ? (cfg.position === "left" ? 0 : calBox.width)
+                                                            : calBox.width / 2
+                                    origin.y: root.vertical ? calBox.height / 2
+                                                            : (cfg.position === "top" ? 0 : calBox.height)
+                                    xScale: calBox.grow
+                                    yScale: calBox.grow
+                                }
+
                                 readonly property int firstDay: cfg.weekMonday ? 1 : 0
-                                readonly property int cellW: 36
-                                readonly property int cellH: 30
-                                readonly property int pad: 16
+                                readonly property int cellW: root.cl(36)
+                                readonly property int cellH: root.cl(30)
+                                readonly property int pad: root.cl(16)
                                 readonly property int gridW: cellW * 7
 
                                 readonly property date now: clk.date
@@ -2112,7 +2365,7 @@ Scope {
                                 Column {
                                     id: calCol
                                     anchors.centerIn: parent
-                                    spacing: 12
+                                    spacing: root.cl(12)
 
                                     Column {
                                         spacing: 2
@@ -2135,7 +2388,7 @@ Scope {
 
                                     Item {
                                         width: calBox.gridW
-                                        height: 26
+                                        height: root.cl(26)
 
                                         Arrow {
                                             anchors.left: parent.left
@@ -2229,6 +2482,7 @@ Scope {
                     onActiveChanged:if(!active)previousButtons=Qt.NoButton
                 }
                 ShaderEffectSource {
+                    id:moduleDragPreview
                     visible:root.dragMoved&&root.dragItem!==null&&root.dragWindow===bar
                     sourceItem:root.dragItem;hideSource:true;live:true
                     width:root.dragItem?root.dragItem.width:0;height:root.dragItem?root.dragItem.height:0

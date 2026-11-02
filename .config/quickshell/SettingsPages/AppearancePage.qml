@@ -15,10 +15,12 @@ Item {
     property real labelWidth: 200
 
     // ---- Hub slider ranges (opacity stops at 20% so the window can't become invisible) ----
-    readonly property real opacityMin: 0.2
+    readonly property real opacityMin: 0
     readonly property real opacityMax: 1.0
     readonly property real tiltMin: 0
     readonly property real tiltMax: 15
+    readonly property real scaleMin: 0.6
+    readonly property real scaleMax: 1.2
     readonly property real radiusMin: 0
     readonly property real radiusMax: 35
     // Border opacity stops at 10% so borders can't vanish completely by accident
@@ -35,6 +37,8 @@ Item {
     property string animationMode: "auto"     // "auto" | "on" | "off"
     property int lowBatteryPercent: 20
     property string effectsLevel: "moderate"   // "off" | "moderate" | "high"
+    // When false, opacity.sh leaves the Quickshell components alone (read by the script)
+    property bool qsOpacityFollow: true
     property string lastLua: ""
 
     // Battery + power profile come from UPower / power-profiles-daemon over D-Bus
@@ -297,11 +301,52 @@ Item {
     Process {
         id: hyprApply
         stdout: StdioCollector {
-            onStreamFinished: if (text.trim().length > 0 && text.trim() !== "ok") console.log("[look] hyprctl:", text.trim())
+            onStreamFinished: {
+                const t = text.trim()
+                if (t.length > 0 && t.split("\n").some(l => l.trim() !== "" && l.trim() !== "ok"))
+                    console.log("[look] hyprctl:", t)
+            }
         }
         stderr: StdioCollector {
             onStreamFinished: if (text.trim().length > 0) console.warn("[look] hyprctl error:", text.trim())
         }
+    }
+
+    // ---- Background picture: file chooser (zenity or kdialog, whichever is installed) ----
+    Process {
+        id: pickProc
+        command: ["sh", "-c",
+            "if command -v zenity >/dev/null 2>&1; then "
+            + "zenity --file-selection --title='Choose background picture' "
+            + "--file-filter='Images | *.png *.jpg *.jpeg *.webp *.bmp *.gif' 2>/dev/null; "
+            + "elif command -v kdialog >/dev/null 2>&1; then "
+            + "kdialog --getopenfilename \"$HOME\" 'image/*' 2>/dev/null; "
+            + "else echo 'no file chooser found (install zenity or kdialog), or type the path' >&2; fi"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const p = page.cleanPath(text)
+                if (p !== "") {
+                    Theme.setHub("bgImagePath", p)
+                    Theme.setHub("bgImageEnabled", true)
+                }
+            }
+        }
+        stderr: StdioCollector {
+            onStreamFinished: if (text.trim().length > 0) console.warn("[hub] picture chooser:", text.trim())
+        }
+    }
+
+    function pickImage() {
+        if (!pickProc.running) pickProc.running = true
+    }
+
+    // Accepts a typed/pasted path: trims whitespace and surrounding quotes,
+    // turns file:// URLs into plain paths, expands a leading ~.
+    function cleanPath(raw) {
+        let p = String(raw).trim().replace(/^["']|["']$/g, "")
+        if (p.indexOf("file://") === 0) p = decodeURIComponent(p.substring(7))
+        if (p === "~" || p.indexOf("~/") === 0) p = Quickshell.env("HOME") + p.substring(1)
+        return p
     }
 
     function markReady() {
@@ -325,6 +370,7 @@ Item {
             const saved = JSON.parse(settingsFile.text())
             if (["auto", "on", "off"].indexOf(saved.animations) !== -1) animationMode = saved.animations
             if (["off", "moderate", "high"].indexOf(saved.effects) !== -1) effectsLevel = saved.effects
+            if (typeof saved.qsOpacityFollow === "boolean") qsOpacityFollow = saved.qsOpacityFollow
 
             if (saved.look && typeof saved.look === "object") {
                 const n = Object.assign({}, lookDefaults)
@@ -357,6 +403,11 @@ Item {
         applyTimer.restart()
     }
 
+    function setQsOpacityFollow(v) {
+        qsOpacityFollow = v
+        saveTimer.restart()
+    }
+
     function setLook(key, value) {
         const n = Object.assign({}, look)
         n[key] = value
@@ -379,6 +430,7 @@ Item {
         const json = JSON.stringify({
             animations: animationMode,
             effects: effectsLevel,
+            qsOpacityFollow: qsOpacityFollow,
             look: look
         }, null, 2)
         if (json !== lastSavedJson) {
@@ -547,6 +599,43 @@ Item {
             label: tg.checked ? "ON" : "OFF"
             current: tg.checked
             onClicked: tg.toggled(!tg.checked)
+        }
+    }
+
+    // Percent slider (0..1) used by the BACKGROUND IMAGE card.
+    // moved = live preview while dragging, committed = release (persist).
+    component PctSlider: Row {
+        id: ps
+        property string label: ""
+        property real value: 0
+        signal moved(real v)
+        signal committed(real v)
+
+        width: parent.width; spacing: 8
+
+        Text {
+            width: page.labelWidth
+            anchors.verticalCenter: parent.verticalCenter
+            text: ps.label; color: Theme.text
+            font.family: Theme.fontFamily; font.pixelSize: Theme.textSizeBody
+        }
+
+        Slider {
+            width: parent.width - page.labelWidth - 52 - 16
+            anchors.verticalCenter: parent.verticalCenter
+            label: ""; icon: ""
+            value: ps.value
+            onMoved: value => ps.moved(page.clamp01(value))
+            onCommitted: value => ps.committed(page.round2(page.clamp01(value)))
+        }
+
+        Text {
+            width: 52
+            anchors.verticalCenter: parent.verticalCenter
+            horizontalAlignment: Text.AlignRight
+            text: Math.round(ps.value * 100) + "%"
+            color: Theme.text
+            font.family: Theme.fontFamily; font.pixelSize: Theme.textSizeBody
         }
     }
 
@@ -824,6 +913,14 @@ Item {
                     Column {
                         width: parent.width; spacing: 6
                         ToggleRow {
+                            label: "CLOSE ON OUTSIDE CLICK"; checked: Theme.clickOutsideClose
+                            onToggled: v => Theme.setHub("clickOutsideClose", v)
+                        }
+                        ToggleRow {
+                            label: "SYNC OPACITY SCRIPT"; checked: page.qsOpacityFollow
+                            onToggled: v => page.setQsOpacityFollow(v)
+                        }
+                        ToggleRow {
                             label: "BLUR PANELS"; checked: page.look.blurLayers
                             onToggled: v => page.setLook("blurLayers", v)
                         }
@@ -922,69 +1019,123 @@ Item {
                             }
                         }
 
-                        // ---- click outside closes ----
+                        // ---- window scale ----
                         Row {
-                            width: parent.width
-                            spacing: 16
-                            // Close on outside click
-                            Row {
-                                height: 28
-                                spacing: 8
+                            width: parent.width; spacing: 8
 
-                                Text {
-                                    width: 176
-                                    height: 28
-                                    verticalAlignment: Text.AlignVCenter
-                                    text: "CLOSE ON OUTSIDE CLICK"
-                                    color: Theme.text
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.textSizeBody
-                                }
+                            Text {
+                                width: page.labelWidth
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "WINDOW SCALE"; color: Theme.text
+                                font.family: Theme.fontFamily; font.pixelSize: Theme.textSizeBody
+                            }
 
-                                Rectangle {
-                                    width: 64
-                                    height: 28
-                                    radius: Theme.radius
+                            Slider {
+                                width: parent.width - page.labelWidth - 52 - 16
+                                anchors.verticalCenter: parent.verticalCenter
+                                label: ""; icon: ""
+                                value: page.clamp01((Theme.settingsScale - page.scaleMin) / (page.scaleMax - page.scaleMin))
+                                onMoved: value => Theme.settingsScale = page.round2(page.scaleMin + page.clamp01(value) * (page.scaleMax - page.scaleMin))
+                                onCommitted: value => Theme.setHub("settingsScale", page.round2(page.scaleMin + page.clamp01(value) * (page.scaleMax - page.scaleMin)))
+                            }
 
-                                    color: Theme.clickOutsideClose
-                                        ? Theme.alpha(Theme.accent, 0.10)
-                                        : (outsideMouse.containsMouse
-                                           ? Theme.alpha(Theme.accent, 0.08)
-                                           : "#00000000")
-
-                                    border.width: 1
-                                    border.color: Theme.clickOutsideClose
-                                        || outsideMouse.containsMouse
-                                        ? Theme.accent : Theme.border
-
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: Theme.clickOutsideClose ? "ON" : "OFF"
-                                        color: Theme.clickOutsideClose
-                                            ? Theme.accentSolid : Theme.text
-                                        font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.textSizeBody
-                                        font.bold: true
-                                        font.letterSpacing: 1
-                                    }
-
-                                    MouseArea {
-                                        id: outsideMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: Theme.setHub(
-                                            "clickOutsideClose",
-                                            !Theme.clickOutsideClose
-                                        )
-                                    }
-                                }
+                            Text {
+                                width: 52
+                                anchors.verticalCenter: parent.verticalCenter
+                                horizontalAlignment: Text.AlignRight
+                                text: Math.round(Theme.settingsScale * 100) + "%"
+                                color: Theme.text
+                                font.family: Theme.fontFamily; font.pixelSize: Theme.textSizeBody
                             }
                         }
                     }
                 }
+
+                // ---- Background picture ----
+                Card {
+                    Column {
+                        width: parent.width; spacing: 8
+
+                        Row {
+                            spacing: 10
+                            GroupLabel { text: "BACKGROUND IMAGE" }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "LOWER BACKGROUND OPACITY TO SEE IT"
+                                color: Theme.textDim
+                                font.family: Theme.fontFamily; font.pixelSize: Theme.textSizeSmall
+                            }
+                        }
+
+                        ToggleRow {
+                            label: "USE PICTURE"; checked: Theme.bgImageEnabled
+                            onToggled: v => Theme.setHub("bgImageEnabled", v)
+                        }
+
+                        Row {
+                            width: parent.width; spacing: 8
+
+                            Rectangle {
+                                width: parent.width - parent.spacing - browseBtn.width
+                                height: 28; radius: Theme.radius
+                                color: "#00000000"; clip: true
+                                border.width: 1
+                                border.color: pathInput.activeFocus ? Theme.accent : Theme.border
+
+                                TextInput {
+                                    id: pathInput
+                                    anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8
+                                    verticalAlignment: TextInput.AlignVCenter
+                                    clip: true; selectByMouse: true
+                                    text: Theme.bgImagePath
+                                    color: Theme.text
+                                    selectionColor: Theme.accent
+                                    font.family: Theme.fontFamily; font.pixelSize: Theme.textSizeBody
+                                    onEditingFinished: Theme.setHub("bgImagePath", page.cleanPath(text))
+                                }
+
+                                Text {
+                                    anchors.fill: parent; anchors.leftMargin: 8
+                                    verticalAlignment: Text.AlignVCenter
+                                    visible: pathInput.text === "" && !pathInput.activeFocus
+                                    text: "/path/to/picture.jpg"
+                                    color: Theme.textFaint
+                                    font.family: Theme.fontFamily; font.pixelSize: Theme.textSizeBody
+                                }
+                            }
+
+                            SmallButton {
+                                id: browseBtn
+                                width: 90
+                                label: "BROWSE"
+                                onClicked: page.pickImage()
+                            }
+                        }
+
+                        PctSlider {
+                            label: "IMAGE OPACITY"; value: Theme.bgImageOpacity
+                            onMoved: v => Theme.bgImageOpacity = v
+                            onCommitted: v => Theme.setHub("bgImageOpacity", v)
+                        }
+                        PctSlider {
+                            label: "IMAGE BLUR"; value: Theme.bgImageBlur
+                            onMoved: v => Theme.bgImageBlur = v
+                            onCommitted: v => Theme.setHub("bgImageBlur", v)
+                        }
+                        PctSlider {
+                            label: "FADE: TOP OPACITY"; value: Theme.bgImageFadeTop
+                            onMoved: v => Theme.bgImageFadeTop = v
+                            onCommitted: v => Theme.setHub("bgImageFadeTop", v)
+                        }
+                        PctSlider {
+                            label: "FADE: BOTTOM OPACITY"; value: Theme.bgImageFadeBottom
+                            onMoved: v => Theme.bgImageFadeBottom = v
+                            onCommitted: v => Theme.setHub("bgImageFadeBottom", v)
+                        }
+                    }
+                }
             }
-                // ---- Blur & Shadow ----
+            // ---- Blur & Shadow ----
                 Card {
                     Column {
                         width: parent.width; spacing: 8

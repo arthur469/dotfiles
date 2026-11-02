@@ -17,7 +17,7 @@ PanelWindow {
     property real skewFactor: 0
     property real baseSpacing: 0
     property real edgeSpacing: 80
-    property int startPosition: 4
+    property int startPosition: 7
     property bool shadowEnabled: true
     property color shadowColor: "#000000"
     property real shadowOpacity: 0.4
@@ -26,6 +26,32 @@ PanelWindow {
     property real shadowY: 6
     property string wallpaperPath: configs.wallpaper_path.replace("$HOME", Quickshell.env("HOME"))
     property string cachePath: configs.cache_path.replace("$HOME", Quickshell.env("HOME"))
+
+    // ---- Launch animation -------------------------------------------------
+    // intro: 0 -> 1 drives the scale-up and rise (ease-out).
+    // fade:  0 -> 1 drives opacity on its own gentler curve so it stays visible.
+    property int introDuration: 300
+    property real introScale: 0.94      // starting scale of the carousel
+    property real introRise: 24         // starting vertical offset (px @1080p)
+    property real intro: 0
+    property real fade: 0
+
+    NumberAnimation on intro {
+        from: 0
+        to: 1
+        duration: main.introDuration
+        easing.type: Easing.OutCubic
+        running: true
+    }
+
+    NumberAnimation on fade {
+        from: 0
+        to: 1
+        duration: main.introDuration
+        easing.type: Easing.InOutQuad
+        running: true
+    }
+    // -----------------------------------------------------------------------
 
     property bool showEmpty: false
     readonly property bool looksEmpty: wallpaperPath !== ""
@@ -93,6 +119,7 @@ PanelWindow {
         spacing: 10 * main.ui
         z: 2
         visible: main.showEmpty
+        opacity: main.fade
 
         Text {
             text: "No wallpapers found"
@@ -136,6 +163,12 @@ PanelWindow {
         cacheBuffer: 400 * main.ui
         boundsBehavior: Flickable.StopAtBounds
 
+        // Launch animation: fade + subtle scale-up + small rise
+        opacity: main.fade
+        scale: main.introScale + (1 - main.introScale) * main.intro
+        transformOrigin: Item.Center
+        transform: Translate { y: (1 - main.intro) * main.introRise * main.ui }
+
         property int selectedIndex: main.startPosition
 
         readonly property real tileHeight: main.refHeight * main.ui
@@ -148,6 +181,7 @@ PanelWindow {
         readonly property real sideMargin: Math.max(0, viewportCenterX - tileWidth / 2)
         property bool ready: false
         property bool userMoved: false
+        property bool jumping: false
         property real lastMouseX: -1
         property real lastMouseY: -1
 
@@ -175,11 +209,19 @@ PanelWindow {
             Quickshell.execDetached(["bash", Quickshell.shellPath("commands.sh"), folderModel.get(selectedIndex, "filePath")])
             Qt.quit()
         }
-
         function moveSelection(delta, speedMultiplier) {
+            if (count <= 0) return
+            const next = (selectedIndex + delta + count) % count
+            const wrapped = Math.abs(next - selectedIndex) > 1
             anim.velocity = main.speed * speedMultiplier
-            selectedIndex = clampIndex(selectedIndex + delta)
-            ensureVisibleAnimated(selectedIndex)
+            selectedIndex = next
+            if (wrapped) {
+                jumping = true
+                contentX = centerX(next)
+                jumping = false
+            } else {
+                ensureVisibleAnimated(next)
+            }
         }
 
         onCountChanged: centerOnStart()
@@ -190,9 +232,8 @@ PanelWindow {
             target: configs
             function onNumber_of_picturesChanged() { list.centerOnStart() }
         }
-
         Behavior on contentX {
-            enabled: list.ready
+            enabled: list.ready && !list.jumping
             SmoothedAnimation { id: anim; property real velocity: main.speed; duration: main.animDuration }
         }
 
@@ -256,7 +297,8 @@ PanelWindow {
                 Image {
                     id: img
                     anchors.fill: parent
-                    opacity: 0.95
+                    opacity: delegateItem.active ? 1.0 : 0.8
+                    Behavior on opacity { NumberAnimation { duration: 150 } }
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
                     cache: false
@@ -277,7 +319,7 @@ PanelWindow {
                         if (status === Image.Error) { alt.text = "Caching"; retryTimer.start() }
                     }
                 }
-                AnimatedImage {                        
+                AnimatedImage {
                     id: gifImage
                     anchors.fill: parent
                     z: 5
@@ -290,7 +332,7 @@ PanelWindow {
                     asynchronous: true
                     cache: false
                     smooth: true
-                    opacity: 0.95
+                    opacity: 1.0
                     transform: Shear { xFactor: main.skewFactor }
                 }
 

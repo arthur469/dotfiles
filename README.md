@@ -1,15 +1,19 @@
 <div align="center">
 
-## 43PR Desktop
+<img width="2171" height="724" alt="43pr_dotfiles_combined" src="assets/banner.png" />
 
-A simple, lightweight Hyprland setup focused on productivity, practical keybinds, and easy to customize.
+<p align="center">
+<img src="https://img.shields.io/badge/HYPRLAND-0.57-667A82?style=flat&labelColor=101418" height="20" alt="Hyprland">
+<a href="https://discord.gg/j32UAE4WFP"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Finvites%2Fj32UAE4WFP%3Fwith_counts%3Dtrue&query=%24.approximate_member_count&style=flat&logo=discord&logoColor=ffffff&label=DISCORD&labelColor=101418&color=7289a8" height="20" alt="Discord"></a>
+<a href="https://www.youtube.com/@43PR2"><img src="https://img.shields.io/badge/YOUTUBE-SUBSCRIBE-b05a63?style=flat&logo=youtube&logoColor=ffffff&labelColor=101418" height="20" alt="YouTube"></a>
+<a href="https://ko-fi.com/43pr"><img src="https://img.shields.io/badge/SUPPORT-KOFI?style=flat&logo=ko-fi&logoColor=ffffff&label=KO--FI&labelColor=101418&color=9a6570" height="20" alt="Ko-Fi"></a>
+</p>
 
-![Hyprland](https://img.shields.io/badge/Hyprland-0.56.2-8b9aaf?style=for-the-badge&labelColor=101418)
-[![Discord](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Finvites%2Fj32UAE4WFP%3Fwith_counts%3Dtrue&query=%24.approximate_member_count&style=for-the-badge&logo=discord&logoColor=ffffff&label=discord&labelColor=101418&color=7289a8)](https://discord.gg/j32UAE4WFP)
-[![YouTube](https://img.shields.io/badge/youtube-subscribe-b05a63?style=for-the-badge&logo=youtube&logoColor=ffffff&labelColor=101418)](https://www.youtube.com/@43PR2)
-[![Ko-Fi donate](https://img.shields.io/badge/donate-kofi?style=for-the-badge&logo=ko-fi&logoColor=ffffff&label=ko-fi&labelColor=101418&color=9a6570)](https://ko-fi.com/43pr)
+<b><a href="#features">Features</a>  ·  <a href="#keybinds">Keybinds</a>  ·  <a href="#installation">Installation</a></b>
 
-### **[Features](#features)  -  [Keybinds](#keybinds)  -  [Installation](#installation) -  [Updating](#updating)**
+</div>
+
+<img width="1920" height="1080" alt="1793227457" src="assets/desktop.png" />
 
 <p align="center">
   <sub>
@@ -17,42 +21,31 @@ A simple, lightweight Hyprland setup focused on productivity, practical keybinds
   </sub>
 </p>
 
-</div>
-
-<img width="1920" height="1080" alt="1792462138" src="https://github.com/user-attachments/assets/10324a99-1038-431f-9f64-0183e2e04276" />
-
 <details>
-<summary><b>What is this? Beginner?</b></summary>
+<summary><b>✧ What is this? Requirements?</b></summary>
 
-### What is this?
+<br>
 
-This is a full customizable desktop setup for Linux. (bar, app launcher, settings, wallpaper picker, lock screen, power menu, etc). It's built on **Hyprland** (window manager) and **Quickshell** (what the bar and menus are made with). 
+A full customizable Linux desktop: bar, system settings and menus to customize your desktop. Built on **Hyprland** (window manager) and **Quickshell** (what the bar and menus are made with). 
 
-### What do I need to run it?
+This setup aims to keep things simple, fast and practical, and easy to make your own without editing config files.
 
-- An **Arch-based Linux distro**: Arch, CachyOS, EndeavourOS, Manjaro, etc.
-- A mostly **clean installation**. Existing configs that get replaced are backed up automatically.
+### Requirements
 
-I'd recommend CachyOS for beginners: https://youtu.be/eo9MejbzWto
+- **Arch-based distro:** Arch, CachyOS, EndeavourOS, Manjaro, etc.
+- **A mostly clean install.** Replaced configs are backed up automatically.
 
-You can skip the configuration section of the video, now it's automated. Just run the installation command.
+> New to Linux? I recommend watching this [CachyOS Tutorial](https://www.youtube.com/watch?v=rJcrb7vxoCo). 
 
-### Is it hard to use?
+**Need help?** Join the Discord (button above).
 
-Not really. Almost everything is a keyboard shortcut, with mouse alternatives:
+### Hardware
 
-- `Super + I` - Open settings - `Middle-click the clock` 
+- RAM: 4 GB minimum, 8 GB recommended.
+- GPU: Intel, AMD or NVIDIA with compatible wayland drivers.
+- Display: Will look much better in FHD or higher.
 
-Check other [Keybinds](#keybinds). You can also hover over bar elements to see what they do
-
-### What should I know before installing?
-
-- Log out and back in once the installer finishes.
-- Wallpapers aren't included in the install. Download some and put them in `Pictures/Wallpapers`.
-
-### Something broke, where do I ask?
-
-Join the [Discord](https://discord.gg/HQwU9SzHj).
+As reference I made this project with a i5 6th dell laptop with integrated graphics so it should be really smooth in other potatoes too.
 
 </details>
 
@@ -72,10 +65,6 @@ Join the [Discord](https://discord.gg/HQwU9SzHj).
 - **Spotify + Spicetify** — Custom theme based on **text - darkthemer**, (modified).
 
 > All programs: [packages.txt](packages.txt)
-
-### Wallpaper Selector
-
-Just made some tweaks to it. Give it some love: [hyprquickpaper](https://github.com/iamsurjog/hyprquickpaper)
 
 ## Keybinds
 
@@ -138,8 +127,6 @@ chmod +x install.sh
 
 After the installation finishes log out and back in. 
 
-Dowload and move wallpapers to Pictures/Wallpapers. Wallpaper picker: Super + W.
-
 > [!important]
 > **Do not move or delete the dotfiles repository after installation.**
 >
@@ -154,16 +141,9 @@ Dowload and move wallpapers to Pictures/Wallpapers. Wallpaper picker: Super + W.
 > The installer will update the existing symlinks to point to the new location.
 
 ---
-## Updating
 
-```bash
-cd dotfiles
-git pull
-./update.sh
-```
+### Credits
 
-Other options: `--dry-run` (preview changes), `--skip-packages`, `--skip-theme`.
+**Wallpaper selector:** modified, originally built from the [hyprquickpaper](https://github.com/iamsurjog/hyprquickpaper) by iamsurjog.
 
-Dotfiles are symlinked so, `git pull` updates your live configs directly.
-
-You can check the reminders printed at the end of the run.
+**Banner artwork:** by cherry✟ ([@aletiune](https://x.com/aletiune)). 

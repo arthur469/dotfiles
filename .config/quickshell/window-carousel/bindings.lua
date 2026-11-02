@@ -17,11 +17,17 @@ local function release()
     pending = nil
     hl.dispatch(hl.dsp.exec_cmd(ipc .. "releaseSwitch " .. token))
 end
-hl.bind("SUPER + Tab", function() begin(1) end)
-hl.bind("SUPER + SHIFT + Tab", function() begin(-1) end)
+local chord = kb_carousel or "ALT + Tab"
+local reverse = chord:gsub("(%S+)$", "SHIFT + %1")
+hl.bind(chord, function() begin(1) end)
+hl.bind(reverse, function() begin(-1) end)
 -- Le compositeur reçoit aussi les relâchements précédant le focus de la surface QML.
 -- Identifiants appariés : un IPC tardif d'un ancien appui ne valide pas le suivant.
-for _, key in ipairs({ "Super_L", "Super_R" }) do
-    hl.bind(key, release, { release = true, ignore_mods = true, non_consuming = true, transparent = true })
+local released = chord:upper():find("SUPER",1,true) and {"Super_L","Super_R"}
+    or chord:upper():find("ALT",1,true) and {"Alt_L","Alt_R"}
+    or {"Control_L","Control_R"}
+for _, key in ipairs(released) do
+    hl.bind(key, release, { release=true, ignore_mods=true, non_consuming=true, transparent=true })
 end
-hl.bind("ALT + Tab", hl.dsp.exec_cmd("python3 " .. base .. "quick-switch.py"))
+
+hl.bind(kb_quick_switch or "ALT + Escape", hl.dsp.exec_cmd("python3 " .. base .. "quick-switch.py"))

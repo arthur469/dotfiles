@@ -1,0 +1,55 @@
+// Reference: 43PR/dotfiles 50bab24, Bar.qml StatBadge; same repository license.
+    component StatBadge: Interactive {
+        id: stat
+        property string label: ""
+        property string valueText: ""
+        property string unit: ""
+        readonly property string shownValue: valueText + (cfg.statsPercent ? unit : "")
+        readonly property color fg: warning ? Theme.danger : Theme.text
+        readonly property int fontPx: Math.max(6, Math.round(root.sz.taskIcon * 0.5 * cfg.statsScale))
+
+        Layout.alignment: Qt.AlignCenter
+        implicitWidth: root.vertical ? root.panelThick : badge.width + 8
+        implicitHeight: root.vertical ? badge.height + 8
+                                      : Math.max(root.panelThick - 2, badge.height + 6)
+        interactive: false
+
+        Rectangle {
+            id: badge
+            anchors.centerIn: parent
+            width: root.vertical ? Math.max(root.sz.taskIcon + 6, statRow.implicitWidth + 8)
+                                 : statRow.implicitWidth + 14
+            height: root.vertical ? statRow.implicitHeight + 10
+                                  : Math.max(root.sz.taskIcon, statRow.implicitHeight + 6)
+            radius: Math.min(width, height) / 2
+            color: Qt.alpha(stat.fg, 0.045)
+            border.width: cfg.statsBorder ? 1 : 0
+            border.color: Qt.alpha(stat.fg, 0.18)
+
+            GridLayout {
+                id: statRow
+                anchors.centerIn: parent
+                flow: root.vertical ? GridLayout.TopToBottom : GridLayout.LeftToRight
+                rowSpacing: 0
+                columnSpacing: 4
+
+                Text {
+                    Layout.alignment: Qt.AlignCenter
+                    text: stat.label
+                    color: Qt.alpha(stat.fg, 0.75)
+                    font.family: Theme.iconFont
+                    font.pixelSize: stat.fontPx - 1
+                    renderType: Text.NativeRendering
+                }
+                Text {
+                    Layout.alignment: Qt.AlignCenter
+                    text: stat.shownValue
+                    color: stat.fg
+                    font.family: Theme.iconFont
+                    font.bold: true
+                    font.pixelSize: stat.fontPx
+                    renderType: Text.NativeRendering
+                }
+            }
+        }
+    }

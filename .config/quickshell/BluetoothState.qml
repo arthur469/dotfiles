@@ -25,10 +25,15 @@ Singleton {
     property string trackedSink: ""
     property real settleUntil: 0
     property int settleMs: 6000
+    property int reconnectMaxTries: 4
     onBtSinkChanged: if (!btSink) trackedSink = ""
     
 
     function init() {}
+    IpcHandler {
+        target: "bluetooth"
+        function diagnostic(): string { return JSON.stringify({adapters:Bluetooth.adapters.values.length,available:!!root.adapter,powered:root.powered,scanning:root.adapter?root.adapter.discovering:false,devices:root.deviceList().length}); }
+    }
 
     Process {
         command: ["mkdir", "-p", root.stateDir]
@@ -156,10 +161,16 @@ Singleton {
             if (d.state !== BluetoothDeviceState.Disconnected)
                 continue
             var b = root.reconnectBackoff[d.address]
+            if (b && b.tries >= root.reconnectMaxTries)
+                continue                      // gave up; wait for manual connect / adapter toggle
             if (b && now < b.next)
                 continue
             var delay = b ? Math.min(b.delay * 2, 60000) : 10000
-            root.reconnectBackoff[d.address] = { next: now + delay, delay: delay }
+            root.reconnectBackoff[d.address] = {
+                next: now + delay,
+                delay: delay,
+                tries: (b ? b.tries : 0) + 1
+            }
             d.trusted = true
             d.connect()
         }

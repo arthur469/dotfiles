@@ -206,3 +206,9 @@ function migrateScales(state) {
     for(const id in (state.moduleScale||{}))next[id]=Math.max(0.5,Math.min(2,state.moduleScale[id]*zoom));
     return {moduleScale:next,moduleScaleVersion:2};
 }
+
+// Native barScale and the older extension moduleZoom share one scale engine.
+function migrateBarScale(saved) {
+    const value=typeof saved.barScale==="number"?saved.barScale:(typeof saved.moduleZoom==="number"?saved.moduleZoom:1);
+    return {barScale:value,moduleZoom:value};
+}

@@ -43,7 +43,7 @@ def start(path):
  source=Path(path).expanduser().resolve()
  if not source.is_file() or source.suffix.lower() not in VIDEOS:raise ValueError('Unsupported wallpaper video')
  stop();CACHE.parent.mkdir(parents=True,exist_ok=True);remember=CACHE.with_suffix('.tmp');remember.write_text(str(source)+'\n');remember.replace(CACHE)
- script=Path(__file__).with_name('wallpaper-mode.lua');options='no-audio loop hwdec=auto input-ipc-server='+str(SOCKET)+' script='+str(script)
+ script=Path(__file__).with_name('wallpaper-mode.lua');options='no-audio loop hwdec=auto panscan=1 input-ipc-server='+str(SOCKET)+' script='+str(script)
  if mode()=='night':options+=' pause=yes'
  args=['mpvpaper','-p','-o',options,'*',str(source)]
  # setsid alone does not escape the Quickshell systemd cgroup. A transient
@@ -60,9 +60,35 @@ def start(path):
  for _ in range(60):
   if SOCKET.exists():
    result=status()
-   if result['available']:return result
+   if result['available']:
+    try:
+     if isinstance(command('get_property','time-pos'),(int,float)):return result
+    except (OSError,RuntimeError):pass  # IPC can open before mpv has loaded the file.
   time.sleep(.05)
  raise RuntimeError('Native wallpaper IPC did not start')
+def playback_expected():
+ # Keep native visibility auto-pause on sleeping outputs and fullscreen desks.
+ # Unknown compositor state must not become a claimed playback verification.
+ try:
+  screens=json.loads(subprocess.check_output(['hyprctl','-j','monitors'],text=True,timeout=2))
+  workspaces=json.loads(subprocess.check_output(['hyprctl','-j','workspaces'],text=True,timeout=2))
+  visible=[s for s in screens if s.get('dpmsStatus',True) and not s.get('disabled',False)]
+  for screen in visible:
+   workspace=next((w for w in workspaces if w['id']==screen.get('activeWorkspace',{}).get('id')),None)
+   if workspace is None:return None
+   if not workspace.get('hasfullscreen',False):return True
+  return False
+ except (OSError,ValueError,subprocess.SubprocessError,KeyError,TypeError):return None
+
+def probe_playback():
+ # mpvpaper's visibility deadman runs every two seconds. An immediate pause=false
+ # readback misses a delayed re-pause; observe beyond that boundary.
+ before=command('get_property','time-pos');time.sleep(2.25)
+ after=command('get_property','time-pos');paused=command('get_property','pause')
+ return {'advanced':isinstance(before,(int,float)) and isinstance(after,(int,float))
+                    and abs(after-before)>.03 and paused is False,
+         'before':before,'after':after,'paused':paused}
+
 def change(selected,preview=False):
  before=status();before['target']=selected
  if preview:return dict(before,preview=True,would_restart=selected=='day' and not before['available'] and CACHE.exists(),verified=True)
@@ -72,12 +98,28 @@ def change(selected,preview=False):
   source=selected_video()
   if source is not None:start(source);restarted=True
  if status()['available']:command('set_property','pause',selected=='night')
- after=status();selected_exists=CACHE.exists()
+ selected_exists=CACHE.exists();playback=None;recovery=None
+ expected=playback_expected() if selected=='day' and selected_exists else False
+ if expected is True and status()['available']:
+  playback=probe_playback()
+  # A hotplug or a night pause can leave the existing player's visibility state
+  # stuck while its IPC still answers. Recover the same native player and video.
+  if not playback['advanced']:expected=playback_expected()
+  if not playback['advanced'] and expected is True:
+   recovery=playback;source=selected_video()
+   if source is None:raise RuntimeError('Selected animated wallpaper disappeared during recovery')
+   position=recovery['after'];start(source);restarted=True
+   if isinstance(position,(int,float)):command('seek',position,'absolute+exact')
+   playback=probe_playback()
+  if expected is True and not playback['advanced']:raise RuntimeError('Animated wallpaper remains frozen after recovery: '+json.dumps({'initial':recovery,'final':playback}))
+ after=status()
  verified=after['available'] and (selected=='day' or after.get('paused') is True)
  if selected=='night' and not after['available']:verified=True
  if selected=='day' and not selected_exists:verified=True
  if not verified:raise RuntimeError('Animated wallpaper mode could not be verified')
- return dict(after,verified=verified,restarted=restarted,skipped=not selected_exists)
+ return dict(after,verified=verified,restarted=restarted,skipped=not selected_exists,
+             playback_verification='progress' if playback and playback['advanced'] else 'hidden' if expected is False else 'unavailable',
+             playback=playback,initial_stall=recovery)
 if __name__=='__main__':
  p=argparse.ArgumentParser();g=p.add_mutually_exclusive_group();g.add_argument('--mode',choices=['day','night']);g.add_argument('--start');g.add_argument('--stop',action='store_true');p.add_argument('--preview',action='store_true');a=p.parse_args()
  try:

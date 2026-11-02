@@ -24,7 +24,8 @@ set -uo pipefail
 # Usage:
 #   ./update2.sh                  normal update
 #   ./update2.sh --dry-run        show what would change, write nothing
-#   ./update2.sh --pull           git pull --ff-only the repo first
+#   ./update2.sh --pull           bring the repo to upstream first (automatic;
+#                                 local changes and divergent history require review)
 #   ./update2.sh --skip-packages
 #   ./update2.sh --skip-theme
 #   ./update2.sh --restart-shell  restart Quickshell afterwards
@@ -64,6 +65,12 @@ GENERATED_FILES=(
     "rofi/colors.rasi"
     "quickshell/Theme.qml"
 )
+
+# Args to pass along when the script re-runs itself after pulling.
+REST_ARGS=()
+for arg in "$@"; do
+    [[ "$arg" == "--pull" ]] || REST_ARGS+=("$arg")
+done
 
 DRY_RUN=0
 PULL=0
@@ -128,15 +135,34 @@ backup() {   # backup <path> <subpath>
 # Pull
 # --------------------------------------------------
 
+# Fetch and fast-forward only; never choose a side of conflicts.
+sync_repo_upstream_wins() {
+    local g=(git -C "$REPO_DIR") ahead behind
+    "${g[@]}" fetch --quiet || { error "git fetch failed."; return 1; }
+    if ! "${g[@]}" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+        error "No tracking branch configured; choose one explicitly."; return 1
+    fi
+    read -r ahead behind < <("${g[@]}" rev-list --left-right --count 'HEAD...@{u}')
+    [[ "$behind" -eq 0 ]] && return 0
+    if [[ "$ahead" -gt 0 || -n "$("${g[@]}" status --porcelain)" ]]; then
+        error "Local changes or divergent history: review and integrate in an isolated checkout first."
+        return 1
+    fi
+    "${g[@]}" merge --ff-only '@{u}' || return 1
+}
+
+
+
 if [[ "$PULL" -eq 1 ]]; then
     if [[ "$DRY_RUN" -eq 1 ]]; then
         info "Would run: git pull --ff-only"
     elif git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         info "Pulling latest changes..."
-        if git -C "$REPO_DIR" pull --ff-only; then
+        if sync_repo_upstream_wins; then
             success "Repository up to date."
+            # The pull may have changed this script; re-run the fresh copy.
+            exec bash "${BASH_SOURCE[0]}" "${REST_ARGS[@]}"
         else
-            error "git pull failed (local changes or diverged history). Fix that and re-run."
             exit 1
         fi
     else
@@ -158,7 +184,7 @@ elif ! command -v pacman >/dev/null 2>&1; then
 elif [[ ! -f "$PACKAGE_FILE" ]]; then
     warning "packages.txt not found; skipping package installation."
 else
-    mapfile -t PACKAGES < <(grep -vE '^[[:space:]]*(#|$)' "$PACKAGE_FILE")
+    mapfile -t PACKAGES < <(sed -E 's/[[:space:]]*#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//; /^$/d' "$PACKAGE_FILE")
 
     MISSING=()
     for pkg in "${PACKAGES[@]}"; do

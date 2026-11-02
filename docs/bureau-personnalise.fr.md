@@ -4,7 +4,7 @@
 
 Les modules natifs sont conservés. Dans Paramètres → BAR, CPU, RAM et GPU ont chacun leur activation et leur emplacement. Un appui long déplace un module ; le rapprocher d’une autre bulle les regroupe. Les commandes START/CENTER/END rétablissent un ancrage automatique.
 
-La disposition libre sur l’écran est facultative. Le seul regroupement est Auto, activable/désactivable : déposer dans une bulle près du haut, du bas, de la gauche ou de la droite d’un module détermine sa cellule. Cela permet rangées, colonnes et carrés. Glisser le fond ou la bordure déplace tout le groupe ; le déposer dans un autre groupe les fusionne. Pendant un glissement avec le bouton gauche enfoncé, le clic droit tourne la disposition de 90° ; les icônes et textes restent droits. Un appui long relâché sans déplacement ne modifie rien. Les guides aimantent les bords et centres proches. Les bulles conservent seulement 3 pixels logiques de marge intérieure par côté. Leur contour de sélection accentué apparaît pendant l’appui maintenu sans augmenter leur largeur.
+La disposition libre sur l’écran est facultative. Le seul regroupement est Auto, activable/désactivable : déposer dans une bulle près du haut, du bas, de la gauche ou de la droite d’un module détermine sa cellule. Cela permet rangées, colonnes et carrés. Glisser le fond ou la bordure déplace tout le groupe ; le déposer dans un autre groupe les fusionne. Pendant un glissement avec le bouton gauche enfoncé, le clic droit tourne la disposition de 90° ; les icônes et textes restent droits. Un appui long relâché sans déplacement ne modifie rien. Les guides aimantent les bords et centres proches. Les bulles conservent 3 pixels logiques de prise aux extrémités dans le sens de la barre, sans ajouter de largeur transverse. Les cellules gardent l’espacement natif des ressources de 2 pixels logiques, ajusté à l’échelle. Le module seul et le groupe utilisent la même largeur de contenu ; le dessin des icônes reste centré. La sélection déplacée reste au-dessus des autres bulles. Leur contour de sélection accentué apparaît pendant l’appui maintenu sans augmenter leur largeur.
 
 Les voisins libèrent la place pendant le geste. Une expansion Open apps déplace temporairement ses voisins ; replier restaure leurs positions, sauf déplacement volontaire entre-temps. Si la place manque, la longueur d’Open apps diminue et le défilement permet toujours de parcourir les applications. Une configuration trop dense pour l’écran peut nécessiter une taille d’icônes ou une échelle plus petite.
 
@@ -88,3 +88,19 @@ Contrôles communs des modules
 - Clic maintenu + molette cible le module depuis son contenu comme depuis ses marges ; le fond extérieur cible la bulle.
 - Une opacité de 100 % peint un fond opaque. Les valeurs des modules et bulles sont indépendantes.
 - Non-régression interactive : `tests/desktop/regression.py --allow-desktop` ; sauvegarde/restauration des préférences, parcours des zones cliquables et des quatre positions de barre. À lancer uniquement après coordination avec l’utilisateur.
+
+Échap ferme les paramètres même après avoir utilisé un contrôle. Dans la recherche, un premier Échap efface le texte, le suivant ferme la fenêtre.
+
+Les tests isolés gardent leurs journaux complets et rendent une synthèse courte. Ils réutilisent seulement les succès dont les empreintes restent compatibles ; les filtres, exclusions et limites du bureau réel sont explicités dans `tests/desktop/README.md`. Le mode `--coverage families` mutualise la continuation/annulation, en conservant chaque intégration et ses sous-éléments.
+
+
+Les contours CPU/RAM/GPU/Disques occupent leur module sans changer sa taille. Leurs chiffres lissés utilisent la taille de référence de l’horloge, avec réduction si nécessaire pour tenir dans le badge. Un bureau persistant privé d’écran est rattaché à l’écran actif au clic. Le passage en mode jour vérifie la progression du fond animé visible et reprend le même MP4 si le lecteur répond mais reste figé ; la pause native est conservée pour les écrans éteints et les bureaux en plein écran.
+
+
+Edge margin protège les deux côtés de l’axe perpendiculaire au bord : gauche/droite sur un bord vertical, haut/bas sur un bord horizontal ; une bulle intérieure en disposition libre garde une marge sur les quatre côtés. Près d’un coin, la réservation conserve le bord choisi au placement. Les compteurs CPU/RAM/GPU/DSQ ont la même largeur en modes Défaut et Compact ; les libellés de Défaut sont disposés au-dessus des valeurs, sans imposer de refaire le zoom.
+
+
+Les contours des compteurs gardent un léger retrait sur les flancs pour laisser le fond de la bulle visible, même si DSQ est plus large que ses voisins. Ce retrait touche uniquement le dessin : tailles, zooms, textes et zones de clic restent conservés.
+
+
+Choisir Floating, Joined ou Strip dans les paramètres de barre quitte la disposition libre. Les groupes, cellules et coordonnées libres restent conservés ; réactiver Disposition libre les retrouve. Après une mise à jour de Hyprland, le plugin de contrôle/réservation doit être reconstruit explicitement avec `.config/hypr/plugins/bubble-reserve/build.sh`, pour la version exacte en cours. Le binaire précédent reste disponible pour le retour arrière.

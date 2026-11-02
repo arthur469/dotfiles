@@ -31,6 +31,20 @@ class StorageTests(unittest.TestCase):
         rows=disk.volumes([dict(name='a',path='/dev/a',model='Portable',children=[self.device(mounts=['/'])]),self.device(uuid='two',mounts=['/mnt/data'])],self.stat)
         self.assertEqual(len(rows),2);self.assertEqual(rows[0]['id'],'uuid:two')
         self.assertTrue(any(r['label']=='Portable' for r in rows))
+    def test_automount_and_children_never_query_capacity(self):
+        for mount in ['/mnt/archive', '/mnt/archive/subdir']:
+            with self.subTest(mount=mount), patch.object(disk.os, 'statvfs') as probe:
+                row=disk.volumes([self.device(mounts=[mount])],probe,automounts=['/mnt/archive'])[0]
+                probe.assert_not_called()
+                self.assertTrue(row['mounted']);self.assertIsNone(row['percent'])
+    def test_automount_prefix_does_not_exclude_other_mounts(self):
+        calls=[]
+        def stat(path):calls.append(path);return self.stat(path)
+        row=disk.volumes([self.device(mounts=['/mnt/archive2'])],stat,automounts=['/mnt/archive'])[0]
+        self.assertEqual(calls,['/mnt/archive2']);self.assertEqual(row['percent'],74)
+    def test_mountinfo_decodes_autofs_paths_without_probing(self):
+        text='1 0 0:1 / /mnt/Cold\\040files rw - autofs systemd-1 rw\n2 1 8:1 / /mnt/Cold\\040files rw - ntfs3 /dev/test rw\n'
+        self.assertEqual(disk.autofs_mounts(text),['/mnt/Cold files'])
     def test_empty_inventory(self):self.assertEqual(disk.volumes([],self.stat),[])
     def test_zero_size(self):
         row=disk.volumes([self.device(mounts=['/'])],lambda _:SimpleNamespace(f_blocks=0,f_bfree=0,f_bavail=0,f_frsize=4096))[0]

@@ -36,7 +36,7 @@ fi
 
 # 3. Intel via intel_gpu_top (needs CAP_PERFMON / root; silently skipped otherwise)
 if [ "$u" = "-" ] && command -v intel_gpu_top >/dev/null 2>&1; then
-  v=$(timeout 3 intel_gpu_top -J -s 500 -n 2 2>/dev/null | grep -o '"busy": *[0-9.]*' | grep -o '[0-9.]*$' | sort -n | tail -n1)
+  v=$(timeout 4 intel_gpu_top -J -s 1000 -n 2 2>/dev/null | awk 'index($0,"Render/3D"){f=1;next} f==1 && /busy/{x=$0;gsub(/[^0-9.]/,"",x);f=2;next} f==2{if(/sema/)last=x;f=0} END{print last}')
   isnum "$v" && u="$v"
 fi
 

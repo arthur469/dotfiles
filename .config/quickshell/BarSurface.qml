@@ -33,6 +33,10 @@ Item {
                 ctx.globalCompositeOperation="destination-out";ctx.globalAlpha=1;ctx.fill();ctx.restore();
             }
             for(const patch of root.patches){
+                // Repainting an identical alpha at fractional cell edges leaves
+                // antialiased seams. Keep the already painted bubble surface.
+                // A patch intersecting a cutout must still restore that cutout.
+                if(patch.opacity===root.surfaceOpacity && !root.holes.some(h=>patch.x<h.x+h.width && patch.x+patch.width>h.x && patch.y<h.y+h.height && patch.y+patch.height>h.y))continue;
                 ctx.clearRect(patch.x,patch.y,patch.width,patch.height);
                 ctx.globalAlpha=Math.max(0,Math.min(1,patch.opacity));ctx.fillRect(patch.x,patch.y,patch.width,patch.height);
             }

@@ -1,4 +1,5 @@
 import Quickshell
+import "colorpicker"
 
 ShellRoot {
     WindowOpacity {}
@@ -19,4 +20,5 @@ ShellRoot {
     }
     Todo { id: todo }
     QuickActions { id: actions }
+    ColorPicker {}
 }

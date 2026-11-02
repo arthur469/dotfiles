@@ -8,6 +8,11 @@ hl.layer_rule({
     ignore_alpha = 0.15,
 })
 
+hl.window_rule({
+    match = { class = ".*" },
+    opacity = "0.9 override",
+})
+
 -- Per-workspace opacity, edited by Super+O. Fullscreen stays opaque below.
 do
     local f = os.getenv("HOME") .. "/.config/hypr/workspace-opacity.lua"

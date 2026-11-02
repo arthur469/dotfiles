@@ -4,8 +4,9 @@ import os,subprocess as sp
 from PIL import Image
 import tempfile,shutil
 root=Path(__file__).resolve().parents[2]
+qml=Path(os.environ.get('PR43_TEST_QML',root/'.config/quickshell'))
 w=Path(tempfile.mkdtemp(prefix='43pr-surface-test-'))
-shutil.copy2(root/'.config/quickshell/BarSurface.qml',w/'BarSurface.qml')
+shutil.copy2(qml/'BarSurface.qml',w/'BarSurface.qml')
 qml='''import QtQuick
 import Quickshell
 Scope {
@@ -15,7 +16,7 @@ Scope {
  Window {visible:true;color:"transparent";width:120;height:80
   BarSurface {id:surface;width:120;height:80;surfaceColor:Qt.rgba(.1,.2,.3,.1);surfaceOpacity:root.values[Math.floor(root.index/3)];radius:12
    holes:[{x:75,y:10,width:25,height:25,radius:4}]
-   patches:[{x:10,y:10,width:30,height:30,opacity:root.values[root.index%3]}]
+   patches:[{x:10,y:10,width:30,height:30,opacity:root.values[root.index%3]},{x:10.5,y:50.25,width:45.5,height:12.5,opacity:root.values[Math.floor(root.index/3)]},{x:10.5,y:62.75,width:45.5,height:12.5,opacity:root.values[Math.floor(root.index/3)]},{x:80,y:25,width:15,height:8,opacity:root.values[Math.floor(root.index/3)]}]
   }
  }
  Timer {id:tick;interval:80;running:true;onTriggered:surface.grabToImage(result=>{result.saveToFile(Qt.resolvedUrl("surface-"+root.index+".png").toString().replace("file://",""));root.index++;if(root.index===9){console.log("PASS surface render");Qt.quit();}else tick.restart();})}
@@ -29,6 +30,9 @@ try:
   image=Image.open(w/f'surface-{i}.png').convert('RGBA');expectedBase=round([.4,.7,1][i//3]*255);expectedPatch=round([.4,.7,1][i%3]*255)
   assert abs(image.getpixel((50,50))[3]-expectedBase)<=1,(i,image.getpixel((50,50)))
   assert abs(image.getpixel((20,20))[3]-expectedPatch)<=1,(i,image.getpixel((20,20)))
+  for y in range(49,77):
+   assert abs(image.getpixel((30,y))[3]-expectedBase)<=1,('same-alpha seam',i,y,image.getpixel((30,y))[3],expectedBase)
+  assert abs(image.getpixel((85,28))[3]-expectedBase)<=1
   assert image.getpixel((85,20))[3]==0;assert image.getpixel((0,0))[3]==0
- print('PASS : 9 alpha combinations, 100% = alpha 255, independent module/bubble opacity, rounded cutouts, theme alpha ignored')
+ print('PASS : 9 alpha combinations, 100% = alpha 255, independent module/bubble opacity, rounded cutouts, theme alpha ignored, equal-alpha fractional seams')
 finally:shutil.rmtree(w)

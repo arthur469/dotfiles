@@ -1,4 +1,6 @@
 #include <hyprland/src/plugins/PluginAPI.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
 #include <hyprland/src/layout/target/WindowTarget.hpp>
 #include <hyprland/src/layout/space/Space.hpp>
 #include <set>
@@ -10,7 +12,7 @@
 #include <linux/input-event-codes.h>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
-#include <hyprland/src/managers/EventManager.hpp>
+#include <hyprland/src/ipc/s2/S2.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
@@ -70,12 +72,12 @@ void readState() {
         }
     }
 }
-bool modalActive(){return std::any_of(Desktop::viewState()->layers().begin(),Desktop::viewState()->layers().end(),[](const auto& layer){return layer&&layer->m_mapped&&layer->m_namespace=="43pr-module-controls";});}
+bool modalActive(){return std::any_of(Desktop::viewState()->layers().begin(),Desktop::viewState()->layers().end(),[](const auto& layer){return layer&&layer->mapped()&&layer->m_namespace=="43pr-module-controls";});}
 void position(Layout::CWindowTarget* target,uint8_t flags) {
     readState();
     const auto window=target->window();
     const auto found=window && window->m_monitor ? obstacles.find(window->m_monitor->m_name) : obstacles.end();
-    bool reserve=enabled && window && window->m_isMapped && found!=obstacles.end();
+    bool reserve=enabled && window && window->mapped() && found!=obstacles.end();
     if(reserve) {
         const auto fullscreen=Fullscreen::controller()->getFullscreenModes(window);
         reserve=fullscreen.internal!=Fullscreen::FSMODE_FULLSCREEN && fullscreen.client!=Fullscreen::FSMODE_FULLSCREEN;
@@ -83,13 +85,13 @@ void position(Layout::CWindowTarget* target,uint8_t flags) {
     // Compute the native geometry without first configuring an intermediate
     // client size. Steam otherwise reacts to two alternating sizes per pass.
     reinterpret_cast<UpdatePosition>(hook->m_original)(target,reserve?flags|Layout::TARGET_UPDATE_NO_CLIENT_CONFIGURE:flags);
-    if(!reserve || !window->m_isMapped)return;
+    if(!reserve || !window->mapped())return;
     const auto original=window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_GOAL);
-    const auto next=BubbleReserve::project({original.x,original.y,original.w,original.h},found->second,margin,window->getRealBorderSize());
+    const auto next=BubbleReserve::project({original.x,original.y,original.w,original.h},found->second,margin,window->presentation().borderSize());
     if(std::abs(next.x-original.x)>=.5||std::abs(next.y-original.y)>=.5||std::abs(next.w-original.w)>=.5||std::abs(next.h-original.h)>=.5) {
         g_pHyprRenderer->damageWindow(window);
         window->setBox({next.x,next.y,next.w,next.h});
-        window->updateWindowDecos();
+        window->presentation().updateDecorations();
         g_pHyprRenderer->damageWindow(window);
     }
     if(!(flags&Layout::TARGET_UPDATE_NO_CLIENT_CONFIGURE))window->sendWindowSize();
@@ -98,11 +100,11 @@ void refresh() {
     readState();
     std::set<Layout::CSpace*> updated;
     for(const auto& window:Desktop::windowState()->windows()) {
-        if(!window || !window->m_isMapped || !window->layoutTarget())continue;
+        if(!window || !window->mapped() || !window->layoutTarget())continue;
         const auto space=window->layoutTarget()->space();
         if(space && updated.insert(space.get()).second)space->recalculate();
     }
-    for(const auto& w:Desktop::windowState()->windows())if(w && w->m_isMapped && w->layoutTarget()) {
+    for(const auto& w:Desktop::windowState()->windows())if(w && w->mapped() && w->layoutTarget()) {
         // A maximized target must recompute its native box before reservation.
         if(Fullscreen::controller()->getFullscreenModes(w).internal==Fullscreen::FSMODE_MAXIMIZED)
             Fullscreen::controller()->m_windowPosSettingQueued=true;
@@ -127,12 +129,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE pluginHandle) {
     HyprlandAPI::addLuaFunction(handle,"bubbles","refresh",[](lua_State*){refresh();return 0;});
     HyprlandAPI::addLuaFunction(handle,"bubbles","inspect_input",[](lua_State*){
         std::ostringstream data;data<<"{\"leftHeld\":"<<leftHeld<<",\"candidate\":"<<candidate<<",\"cancelled\":"<<cancelledGesture<<",\"modal\":"<<modalActive()<<",\"opacityMods\":"<<opacityMods<<",\"opacitySymbol\":"<<opacitySymbol<<"}";
-        g_pEventManager->postEvent({"43pr_bubble_diagnostic",data.str()});return 0;
+        IPC::Socket2::sock()->postEvent({"43pr_bubble_diagnostic",data.str()});return 0;
     });
     // Pointer-scoped input routing. Ordinary application input is untouched.
     auto emit=[](const std::string& kind,double value=0) {
         std::ostringstream data;data<<kind<<","<<pressToken<<","<<pressPoint.x<<","<<pressPoint.y<<","<<value;
-        g_pEventManager->postEvent({"43pr_bubble_input",data.str()});
+        IPC::Socket2::sock()->postEvent({"43pr_bubble_input",data.str()});
     };
     auto emitMove=[](bool force=false) {
         if(!leftHeld||!candidate||!g_pInputManager)return;
@@ -141,7 +143,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE pluginHandle) {
         if(moveEmitted && point==lastMovePoint)return;
         if(!force && moveEmitted && now-lastMoveTime<std::chrono::milliseconds(16))return;
         std::ostringstream data;data<<"move,"<<pressToken<<","<<point.x<<","<<point.y<<",0";
-        g_pEventManager->postEvent({"43pr_bubble_input",data.str()});
+        IPC::Socket2::sock()->postEvent({"43pr_bubble_input",data.str()});
         lastMovePoint=point;lastMoveTime=now;moveEmitted=true;
     };
     auto hit=[](Vector2D point){const auto focused=g_pSeatManager->m_state.pointerFocus.lock();if(!focused)return false;const auto surface=Desktop::View::CWLSurface::fromResource(focused);const auto layer=surface?Desktop::View::CLayerSurface::fromView(surface->view()):nullptr;return layer&&layer->m_namespace=="43pr-bar";};
@@ -152,7 +154,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE pluginHandle) {
         if(event.state==WL_POINTER_BUTTON_STATE_RELEASED&&swallowedButtons.erase(event.button)){info.cancelled=true;return;}
         if(modalActive()&&!inEditor()&&event.state==WL_POINTER_BUTTON_STATE_PRESSED){swallowedButtons.insert(event.button);info.cancelled=true;return;}
         if(leftHeld&&(candidate||cancelledGesture)&&event.state==WL_POINTER_BUTTON_STATE_PRESSED&&event.button!=BTN_LEFT&&event.button!=BTN_RIGHT){swallowedButtons.insert(event.button);info.cancelled=true;return;}
-        const auto point=g_pInputManager->getMouseCoordsInternal();const auto mods=g_pInputManager->getModsFromAllKBs();
+        const auto point=g_pInputManager->getMouseCoordsInternal();const auto mods=static_cast<uint32_t>(g_pInputManager->getModsFromAllKBs());
         if(event.button==BTN_LEFT) {
             leftHeld=event.state==WL_POINTER_BUTTON_STATE_PRESSED;
             if(leftHeld){moveEmitted=false;cancelledGesture=false;candidate=hit(point)&&!(mods&64);pressPoint=point;pressToken=event.timeMs;if(candidate)emit("press");}
@@ -185,7 +187,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE pluginHandle) {
         if(leftHeld&&(candidate||cancelledGesture)){
             if(!modifier){swallowedKeys.insert(event.keycode);info.cancelled=true;return;}
         }
-        const auto mods=g_pInputManager->getModsFromAllKBs();
+        const auto mods=static_cast<uint32_t>(g_pInputManager->getModsFromAllKBs());
         readState();if(modalActive()&&(mods&(64u|8u))&&!modifier){swallowedKeys.insert(event.keycode);info.cancelled=true;return;}
         if((mods&~(2u|16u))!=opacityMods&&(mods&~(2u|16u))!=(opacityMods|1u))return;
         if(symbol!=opacitySymbol)return;

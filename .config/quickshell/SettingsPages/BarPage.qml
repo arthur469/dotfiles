@@ -23,30 +23,87 @@ Item {
     // ------------------------------------------------------------------
 
     readonly property var defaults: ({
-        position: "left", style: "joined", thickness: 20, margin: 4,
-        reserveSpace: true, allScreens: true, freeLayout: false, groupCells: ({}), groupRotations: ({}), groupOpacity: ({}), moduleOpacity: ({}), moduleScale: ({}), moduleZoom:1, moduleScaleVersion:2, autoGroup: true, quickFloatRetile: false, windowGroupsEnabled: false, windowGroups: [], collapsedGroups: ({}), dropToMinimize: false,
-        scale: 1.0, bgOpacity: 0.5, border: false, radius: 16, calRadius: 15,
-        tooltips: true, tooltipHints: true, tipDelay: 450,
-        modPad: 20, wsDot: 10, wsGap: 8, wsScroll: true,
-        statsMode: "compact", statsWarn: 85, statsGpu: true, diskVolumes: [], batLowPct: 15,
-        volStep: 2, volMax: 100,
-        clock24: true, clockSeconds: false, weekMonday: true,
-        tasksCollapsed: false, taskIconSize: 18, taskMaxVisible: 5, moduleGroups: [],
-        hidden: "cpu,ram,gpu,wall,settings,tasks",
-        startMods: "cpu,ram,gpu,ws",
-        centerMods: "clock",
-        endMods: "media,volume,battery,net,notif,wall,settings,power"
-    })
+        "position": "left",
+        "style": "joined",
+        "thickness": 20,
+        "margin": 4,
+        "reserveSpace": true,
+        "allScreens": true,
+        "moduleRegistryVersion": 1,
+        "freeLayout": false,
+        "groupCells": {},
+        "groupRotations": {},
+        "groupOpacity": {},
+        "moduleOpacity": {},
+        "moduleScale": {},
+        "moduleZoom": 1,
+        "moduleScaleVersion": 2,
+        "autoGroup": true,
+        "quickFloatRetile": false,
+        "windowGroupsEnabled": false,
+        "windowGroups": [],
+        "collapsedGroups": {},
+        "dropToMinimize": false,
+        "scale": 1,
+        "bgOpacity": 0.5,
+        "border": false,
+        "radius": 16,
+        "calRadius": 15,
+        "tooltips": true,
+        "tooltipHints": true,
+        "tipDelay": 450,
+        "modPad": 20,
+        "wsDot": 10,
+        "wsGap": 8,
+        "wsScroll": true,
+        "statsMode": "native",
+        "statsWarn": 85,
+        "statsGpu": true,
+        "diskVolumes": [],
+        "batLowPct": 15,
+        "volStep": 2,
+        "volMax": 100,
+        "clock24": true,
+        "clockSeconds": false,
+        "weekMonday": true,
+        "tasksCollapsed": false,
+        "taskIconSize": 18,
+        "taskMaxVisible": 5,
+        "moduleGroups": [],
+        "hidden": "cpu,ram,gpu,temp,wall,settings,tasks",
+        "startMods": "cpu,ram,gpu,temp,ws",
+        "centerMods": "clock",
+        "endMods": "media,volume,battery,net,notif,wall,settings,power",
+        "dragModules": true,
+        "barScale": 1,
+        "calScale": 1,
+        "statsPercent": false,
+        "statsScale": 1,
+        "statsBorder": true,
+        "tempWarn": 85,
+        "clockPrimary": "calendar",
+        "clockSecondary": "quickactions",
+        "clockTertiary": "settings",
+        "settingsPrimary": "settings",
+        "settingsSecondary": "barsettings",
+        "settingsTertiary": "none"
+})
 
     readonly property var positions: ["top", "right", "bottom", "left"]
+    readonly property var statsModes:["native","default","compact"]
     readonly property var styles: ["floating", "joined", "strip"]
-    readonly property var sections: ["start", "center", "end"]
-    readonly property var statsModes: ["default", "compact"]
+    readonly property var clockActions: ["calendar", "quickactions", "settings", "barsettings", "none"]
+    readonly property var settingsActions: ["settings", "barsettings", "quickactions", "none"]
+    readonly property var actionLabels: ({ quickactions: "QUICK ACTIONS", barsettings: "BAR SETTINGS" })
 
+    // Module order / section placement is changed by dragging modules on the bar itself.
+    // This page only turns modules on and off.
     readonly property var moduleDefs: [
         { id: "cpu", l: "CPU" },
         { id: "ram", l: "RAM" },
         { id: "gpu", l: "GPU" },
+        {id:"clock",l:LocaleState.tr("HORLOGE","CLOCK")},
+        {id:"temp",l:LocaleState.tr("TEMPÉRATURES","TEMPERATURES")},
         { id: "ws",       l: "WORKSPACES" },
         { id: "tasks",    l: "OPEN APPS" },
         { id: "media",    l: "MEDIA" },
@@ -55,7 +112,7 @@ Item {
         { id: "volume",   l: "VOLUME" },
         { id: "battery",  l: "BATTERY" },
         { id: "net",      l: "NETWORK" },
-        { id: "notif",    l: "NOTIFICATIONS" },
+        { id: "notif",    l: "NOTIFS" },
         { id: "wall",     l: "WALLPAPERS" },
         { id: "settings", l: "SETTINGS" },
         { id: "power",    l: "POWER", fixed: true }
@@ -84,6 +141,7 @@ Item {
 
     function setMany(o) {
         const next=Object.assign({},page.defaults,s,o);
+        if(o.barScale!==undefined)Object.assign(o,BarLayout.uniformScale(o.barScale),{barScale:o.barScale});
         s=Object.assign({},s,o,StorageModules.migrate(next))
         saveTimer.restart()
     }
@@ -97,9 +155,15 @@ Item {
     readonly property bool vertical: val("position") === "left" || val("position") === "right"
     readonly property bool strip: val("style") === "strip"
 
-    // ---- module placement (mirrors the logic in Bar.qml) ----
-    function csv(str) { return str === "" ? [] : str.split(",") }
-    function valid(id) { return moduleIds.indexOf(id) >= 0 }
+    // ---- module enable / disable (mirrors the logic in Bar.qml) ----
+    // The old combined "stats" module is migrated to "cpu" + "ram".
+    function csv(str) {
+        if (str === "") return []
+        const out = []
+        for (const x of str.split(","))
+        x === "stats" ? out.push("cpu", "ram") : out.push(x)
+        return out
+    }
 
     function isOn(id) { return csv(val("hidden")).indexOf(id) < 0 }
     function setOn(id, on) {
@@ -151,7 +215,7 @@ Item {
             const o = {}
             for (const k in defaults)
                 if (j[k] !== undefined && typeof j[k] === typeof defaults[k]) o[k] = j[k]
-            s = Object.assign({},o,StorageModules.upgrade(Object.assign({},defaults,o,{moduleScaleVersion:j.moduleScaleVersion??1}),BarLayout.migrateScales))
+            s = Object.assign({},o,StorageModules.upgrade(Object.assign({},defaults,o,{moduleScaleVersion:j.moduleScaleVersion??1}),BarLayout.migrateScales),BarLayout.migrateBarScale(j))
         } catch (error) {}
     }
 
@@ -214,6 +278,9 @@ Item {
 
         Text {
             anchors.centerIn: parent
+            width: Math.min(implicitWidth, sb.width - 8)
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
             text: sb.label
             color: sb.current ? Theme.accent : Theme.text
             font.family: Theme.fontFamily; font.pixelSize: Theme.textSizeBody; font.bold: true; font.letterSpacing: 1
@@ -334,6 +401,7 @@ Item {
         property var options: []
         property string current: ""
         property int btnWidth: 92
+        property var labels: ({})       // optional id → display text (default: id in upper case)
         signal picked(string v)
 
         width: parent.width
@@ -358,82 +426,11 @@ Item {
                 delegate: SmallButton {
                     required property string modelData
                     width: ch.btnWidth
-                    label: modelData.toUpperCase()
+                    label: ch.labels[modelData] ?? modelData.toUpperCase()
                     current: modelData === ch.current
                     buttonEnabled: ch.enabled
                     onClicked: ch.picked(modelData)
                 }
-            }
-        }
-    }
-
-    component ModuleRow: Item {
-        id: mr
-        property var def: ({})
-
-        width: parent.width
-        height: 32
-
-        Row {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 6
-
-            Text {
-                width: 100
-                height: 28
-                anchors.verticalCenter: parent.verticalCenter
-                text: mr.def.l ?? ""
-                color: Theme.textDim
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.textSizeBody
-                font.letterSpacing: 1
-                verticalAlignment: Text.AlignVCenter
-                elide: Text.ElideRight
-            }
-
-            SmallButton {
-                width: 54
-                label: page.isOn(mr.def.id) || !!mr.def.fixed ? "ON" : "OFF"
-                current: page.isOn(mr.def.id) || !!mr.def.fixed
-                buttonEnabled: !mr.def.fixed
-                onClicked: page.setOn(mr.def.id, !page.isOn(mr.def.id))
-            }
-        }
-
-        Row {
-            anchors.centerIn: parent
-            spacing: 4
-
-            Repeater {
-                model: page.sections
-                delegate: SmallButton {
-                    required property string modelData
-                    width: 64
-                    label: modelData.toUpperCase()
-                    current: modelData === page.sectionOf(mr.def.id)
-                    onClicked: page.moveTo(mr.def.id, modelData)
-                }
-            }
-        }
-
-        Row {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 4
-
-            SmallButton {
-                width: 32
-                label: page.vertical ? "▲" : "◀"
-                buttonEnabled: page.canShift(mr.def.id, -1)
-                onClicked: page.shiftBy(mr.def.id, -1)
-            }
-
-            SmallButton {
-                width: 32
-                label: page.vertical ? "▼" : "▶"
-                buttonEnabled: page.canShift(mr.def.id, 1)
-                onClicked: page.shiftBy(mr.def.id, 1)
             }
         }
     }
@@ -513,13 +510,19 @@ Item {
                             label: "STYLE"
                             options: page.styles
                             current: page.val("style")
-                            onPicked: v => page.set("style", v)
+                            onPicked: v => page.setMany({style:v, freeLayout:false})
                         }
                         BarSlider {
                             label: "THICKNESS"
                             from: 16; to: 40; step: 1; unit: " px"
                             value: page.val("thickness")
                             onMoved: v => page.set("thickness", v)
+                        }
+                        BarSlider {
+                            label: "BAR SCALE"
+                            from: 0.6; to: 1.5; step: 0.05; unit: "×"; decimals: 2
+                            value: page.val("barScale")
+                            onMoved: v => page.set("barScale", v)
                         }
                         BarSlider {
                             label: "EDGE MARGIN"
@@ -535,6 +538,10 @@ Item {
                         ToggleRow {
                             label: "SHOW ON ALL MONITORS"; checked: page.val("allScreens")
                             onToggled: v => page.set("allScreens", v)
+                        }
+                        ToggleRow {
+                            label: "DRAG MODULES ON BAR"; checked: page.val("dragModules")
+                            onToggled: v => page.set("dragModules", v)
                         }
                     }
                 }
@@ -569,6 +576,12 @@ Item {
                             from: 0; to: 32; step: 1; unit: " px"
                             value: page.val("calRadius")
                             onMoved: v => page.set("calRadius", v)
+                        }
+                        BarSlider {
+                            label: "CALENDAR SCALE"
+                            from: 0.6; to: 1.5; step: 0.05; unit: "×"; decimals: 2
+                            value: page.val("calScale")
+                            onMoved: v => page.set("calScale", v)
                         }
                         BarSlider {
                             label: "TEXT SCALE"
@@ -614,12 +627,16 @@ Item {
                     }
                 }
             }
+
             // --------------- MODULES ----------------
+            // One compact on/off button per module, four per row.
+            // Highlighted = shown on the bar. Reorder by dragging modules on the bar.
             Column {
-                width: parent.width; spacing: 4
-                topPadding: 4
-                bottomPadding: 4
+                width: parent.width; spacing: 10
+                topPadding: 6
+
                 SectionTitle { text: "MODULES" }
+
                 Card {
                     Column {
                         width:parent.width;spacing:8
@@ -692,6 +709,91 @@ Item {
                 }
 
             }
+            // ---------------- MODULE APPEARANCE ----------------
+            Column {
+                width: parent.width; spacing: 10
+                topPadding: 6
+
+                SectionTitle { text: "MODULE APPEARANCE" }
+
+                Card {
+                    Column {
+                        width: parent.width; spacing: 10
+                        ToggleRow {
+                            label: "SHOW % / ° SYMBOLS"; checked: page.val("statsPercent")
+                            onToggled: v => page.set("statsPercent", v)
+                        }
+                        ToggleRow {
+                            label: "STATS BORDER"; checked: page.val("statsBorder")
+                            onToggled: v => page.set("statsBorder", v)
+                        }
+                        BarSlider {
+                            label: "STATS TEXT SCALE"
+                            from: 0.7; to: 1.6; step: 0.05; unit: "×"; decimals: 2
+                            value: page.val("statsScale")
+                            onMoved: v => page.set("statsScale", v)
+                        }
+                        BarSlider {
+                            label: "MODULE PADDING"
+                            from: 0; to: 40; step: 2; unit: " px"
+                            value: page.val("modPad")
+                            onMoved: v => page.set("modPad", v)
+                        }
+                        BarSlider {
+                            label: "WORKSPACE DOT SIZE"
+                            from: 6; to: 18; step: 1; unit: " px"
+                            value: page.val("wsDot")
+                            onMoved: v => page.set("wsDot", v)
+                        }
+                        BarSlider {
+                            label: "WORKSPACE DOT SPACING"
+                            from: 0; to: 20; step: 1; unit: " px"
+                            value: page.val("wsGap")
+                            onMoved: v => page.set("wsGap", v)
+                        }
+                        ToggleRow {
+                            label: "SCROLL TO SWITCH WORKSPACE"; checked: page.val("wsScroll")
+                            onToggled: v => page.set("wsScroll", v)
+                        }
+                        BarChoice {
+                            label: LocaleState.tr("STYLE CPU / RAM / GPU", "CPU / RAM / GPU STYLE")
+                            options: page.statsModes
+                            current: page.val("statsMode")
+                            onPicked: v => page.set("statsMode", v)
+                        }
+                        BarSlider {
+                            label: LocaleState.tr("SEUIL CPU / RAM / GPU", "CPU / RAM / GPU THRESHOLD")
+                            from: 50; to: 100; step: 5; unit: "%"
+                            value: page.val("statsWarn")
+                            onMoved: v => page.set("statsWarn", v)
+                        }
+                        BarSlider {
+                            label: "HIGH TEMPERATURE WARNING"
+                            from: 50; to: 110; step: 5; unit: " °"
+                            value: page.val("tempWarn")
+                            onMoved: v => page.set("tempWarn", v)
+                        }
+                        BarSlider {
+                            label: "LOW BATTERY WARNING"
+                            from: 5; to: 50; step: 5; unit: "%"
+                            value: page.val("batLowPct")
+                            onMoved: v => page.set("batLowPct", v)
+                        }
+                        BarSlider {
+                            label: "VOLUME SCROLL STEP"
+                            from: 1; to: 10; step: 1; unit: "%"
+                            value: page.val("volStep")
+                            onMoved: v => page.set("volStep", v)
+                        }
+                        BarSlider {
+                            label: "MAXIMUM VOLUME"
+                            from: 100; to: 150; step: 5; unit: "%"
+                            value: page.val("volMax")
+                            onMoved: v => page.set("volMax", v)
+                        }
+                    }
+                }
+            }
             // ---------------- CLOCK & CALENDAR ----------------
             Column {
                 width: parent.width; spacing: 10
@@ -717,72 +819,56 @@ Item {
                             current: page.val("weekMonday") ? "monday" : "sunday"
                             onPicked: v => page.set("weekMonday", v === "monday")
                         }
+                        BarChoice {
+                            label: "CLOCK LEFT CLICK"
+                            options: page.clockActions; labels: page.actionLabels; btnWidth: 110
+                            current: page.val("clockPrimary")
+                            onPicked: v => page.set("clockPrimary", v)
+                        }
+                        BarChoice {
+                            label: "CLOCK RIGHT CLICK"
+                            options: page.clockActions; labels: page.actionLabels; btnWidth: 110
+                            current: page.val("clockSecondary")
+                            onPicked: v => page.set("clockSecondary", v)
+                        }
+                        BarChoice {
+                            label: "CLOCK MIDDLE CLICK"
+                            options: page.clockActions; labels: page.actionLabels; btnWidth: 110
+                            current: page.val("clockTertiary")
+                            onPicked: v => page.set("clockTertiary", v)
+                        }
                     }
                 }
             }
 
-            // ---------------- MODULE APPEARANCE ----------------
+            // ---------------- SETTINGS BUTTON ----------------
             Column {
                 width: parent.width; spacing: 10
                 topPadding: 6
 
-                SectionTitle { text: "MODULE APPEARANCE" }
+                SectionTitle { text: "SETTINGS BUTTON" }
 
                 Card {
                     Column {
                         width: parent.width; spacing: 10
 
-                        BarSlider {
-                            label: "MODULE PADDING"
-                            from: 0; to: 40; step: 2; unit: " px"
-                            value: page.val("modPad")
-                            onMoved: v => page.set("modPad", v)
-                        }
-                        BarSlider {
-                            label: "WORKSPACE DOT SIZE"
-                            from: 6; to: 18; step: 1; unit: " px"
-                            value: page.val("wsDot")
-                            onMoved: v => page.set("wsDot", v)
-                        }
-                        BarSlider {
-                            label: "WORKSPACE DOT SPACING"
-                            from: 0; to: 20; step: 1; unit: " px"
-                            value: page.val("wsGap")
-                            onMoved: v => page.set("wsGap", v)
-                        }
-                        ToggleRow {
-                            label: "SCROLL TO SWITCH WORKSPACE"; checked: page.val("wsScroll")
-                            onToggled: v => page.set("wsScroll", v)
+                        BarChoice {
+                            label: "SETTINGS LEFT CLICK"
+                            options: page.settingsActions; labels: page.actionLabels; btnWidth: 110
+                            current: page.val("settingsPrimary")
+                            onPicked: v => page.set("settingsPrimary", v)
                         }
                         BarChoice {
-                            label: "STYLE CPU / RAM / GPU"
-                            options: page.statsModes
-                            current: page.val("statsMode")
-                            onPicked: v => page.set("statsMode", v)
+                            label: "SETTINGS RIGHT CLICK"
+                            options: page.settingsActions; labels: page.actionLabels; btnWidth: 110
+                            current: page.val("settingsSecondary")
+                            onPicked: v => page.set("settingsSecondary", v)
                         }
-                        BarSlider {
-                            label: "SEUIL CPU / RAM / GPU"
-                            from: 50; to: 100; step: 5; unit: "%"
-                            value: page.val("statsWarn")
-                            onMoved: v => page.set("statsWarn", v)
-                        }
-                        BarSlider {
-                            label: "LOW BATTERY WARNING"
-                            from: 5; to: 50; step: 5; unit: "%"
-                            value: page.val("batLowPct")
-                            onMoved: v => page.set("batLowPct", v)
-                        }
-                        BarSlider {
-                            label: "VOLUME SCROLL STEP"
-                            from: 1; to: 10; step: 1; unit: "%"
-                            value: page.val("volStep")
-                            onMoved: v => page.set("volStep", v)
-                        }
-                        BarSlider {
-                            label: "MAXIMUM VOLUME"
-                            from: 100; to: 150; step: 5; unit: "%"
-                            value: page.val("volMax")
-                            onMoved: v => page.set("volMax", v)
+                        BarChoice {
+                            label: "SETTINGS MIDDLE CLICK"
+                            options: page.settingsActions; labels: page.actionLabels; btnWidth: 110
+                            current: page.val("settingsTertiary")
+                            onPicked: v => page.set("settingsTertiary", v)
                         }
                     }
                 }
