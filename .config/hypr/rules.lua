@@ -10,7 +10,7 @@ hl.layer_rule({
 
 hl.window_rule({
     match = { class = ".*" },
-    opacity = "0.9 override",
+    opacity = "1.0 override",
 })
 
 -- Per-workspace opacity, edited by Super+O. Fullscreen stays opaque below.

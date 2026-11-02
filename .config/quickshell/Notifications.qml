@@ -54,8 +54,8 @@ Scope {
     readonly property string home: Quickshell.env("HOME")
 
     // toast lifetimes (ms) when the app gives no timeout
-    readonly property int normalTimeout: 3000
-    readonly property int criticalTimeout: 6000
+    readonly property int normalTimeout: 6000
+    readonly property int criticalTimeout: 20000
 
     // grouping state (collapsed groups are persisted, expanded entries are not)
     property var collapsedApps: ({})
@@ -887,7 +887,7 @@ Scope {
 
                         readonly property bool persistent: modelData.expireTimeout === 0
                         readonly property int lifetime: persistent ? 0 : modelData.expireTimeout > 0
-                            ? modelData.expireTimeout
+                            ? Math.max(root.normalTimeout, modelData.expireTimeout)
                             : (critical ? root.criticalTimeout : root.normalTimeout)
                         function restartLifetime() {
                             if (persistent) progAnim.stop();

@@ -1,0 +1,20 @@
+[
+  {
+    "path": ".config/quickshell/Notifications.qml",
+    "property": "normalTimeout",
+    "native": "3000",
+    "personal": "6000"
+  },
+  {
+    "path": ".config/quickshell/Notifications.qml",
+    "property": "criticalTimeout",
+    "native": "6000",
+    "personal": "20000"
+  },
+  {
+    "path": ".config/quickshell/hyprquickpaper/shell.qml",
+    "property": "startPosition",
+    "native": "7",
+    "personal": "4"
+  }
+]

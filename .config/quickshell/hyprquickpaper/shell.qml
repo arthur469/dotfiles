@@ -17,7 +17,7 @@ PanelWindow {
     property real skewFactor: 0
     property real baseSpacing: 0
     property real edgeSpacing: 80
-    property int startPosition: 7
+    property int startPosition: 4
     property bool shadowEnabled: true
     property color shadowColor: "#000000"
     property real shadowOpacity: 0.4

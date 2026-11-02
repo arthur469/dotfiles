@@ -1,0 +1,10 @@
+{
+  "dnd": false,
+  "nightMode": false,
+  "beforeNightDnd": false,
+  "soundEnabled": true,
+  "menuSize": 100,
+  "offsetX": 0,
+  "offsetY": 0,
+  "collapsed": []
+}

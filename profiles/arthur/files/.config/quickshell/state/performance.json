@@ -1,0 +1,29 @@
+{
+  "animations": "auto",
+  "effects": "moderate",
+  "look": {
+    "expandUndersized": false,
+    "gapsIn": 4,
+    "gapsTop": 4,
+    "gapsRight": 8,
+    "gapsBottom": 8,
+    "gapsLeft": 8,
+    "borderSize": 0,
+    "resizeOnBorder": true,
+    "allowTearing": false,
+    "layout": "dwindle",
+    "rounding": 8,
+    "blurSize": 5,
+    "blurPasses": 1,
+    "blurVibrancy": 0.2,
+    "blurLayers": true,
+    "blurLayerAlpha": 0.1,
+    "shadowRange": 4,
+    "shadowPower": 3,
+    "speedWindows": 5,
+    "speedBorder": 5,
+    "speedFade": 4,
+    "speedWorkspaces": 6,
+    "workspaceStyle": "slidefadevert"
+  }
+}

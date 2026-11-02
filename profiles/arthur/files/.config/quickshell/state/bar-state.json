@@ -1,0 +1,257 @@
+{
+  "allScreens": true,
+  "autoGroup": true,
+  "batLowPct": 15,
+  "bgOpacity": 0.5,
+  "border": false,
+  "calRadius": 15,
+  "centerMods": "",
+  "clock24": true,
+  "clockSeconds": true,
+  "collapsedGroups": {},
+  "diskVolumes": [
+    "uuid:__ROOT_VOLUME_UUID__"
+  ],
+  "dropToMinimize": true,
+  "endMods": "",
+  "freeLayout": true,
+  "groupCells": {
+    "center": {},
+    "end": {
+      "battery": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    "free-1793032751744": {
+      "battery": {
+        "x": 0,
+        "y": 0
+      },
+      "net": {
+        "x": 0,
+        "y": 42
+      },
+      "notif": {
+        "x": 0,
+        "y": 44
+      },
+      "power": {
+        "x": 0,
+        "y": 45
+      },
+      "settings": {
+        "x": 0,
+        "y": 43
+      },
+      "wall": {
+        "x": 0,
+        "y": 29
+      }
+    },
+    "free-1793060196960": {
+      "clock": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    "free-1793123952788": {
+      "cpu": {
+        "x": 1,
+        "y": 17
+      },
+      "disk:uuid%3A__ROOT_VOLUME_UUID__": {
+        "x": 1,
+        "y": 18
+      },
+      "gpu": {
+        "x": 1,
+        "y": 16
+      },
+      "ram": {
+        "x": 1,
+        "y": 15
+      },
+      "ws": {
+        "x": 1,
+        "y": 14
+      }
+    },
+    "free-1793124159771": {
+      "brightness": {
+        "x": 0,
+        "y": 2
+      },
+      "opacity": {
+        "x": 0,
+        "y": 1
+      },
+      "volume": {
+        "x": 0,
+        "y": 3
+      }
+    },
+    "free-1793208806507": {
+      "tasks": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    "free-1793497719827": {
+      "media": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    "start": {}
+  },
+  "groupOpacity": {
+    "center": 1,
+    "end": 1,
+    "free-1793032751744": 1,
+    "free-1793060196960": 1,
+    "free-1793123952788": 1,
+    "free-1793124159771": 1,
+    "free-1793208806507": 1,
+    "start": 1
+  },
+  "groupRotations": {
+    "free-1793032751744": 0,
+    "free-1793060196960": 0,
+    "free-1793123952788": 2,
+    "free-1793124159771": 2,
+    "free-1793208806507": 2,
+    "free-1793497719827": 0
+  },
+  "hidden": "wall",
+  "margin": 4,
+  "modPad": 20,
+  "moduleGroups": [
+    {
+      "id": "free-1793060196960",
+      "items": [
+        "clock"
+      ],
+      "position": 0.4279340940287527,
+      "x": 0.0011723329425556857,
+      "y": 0.4279340940287527
+    },
+    {
+      "id": "free-1793208806507",
+      "items": [
+        "tasks"
+      ],
+      "position": 0.5764386008317798,
+      "x": 0.001172346411482805,
+      "y": 0.5764386008317798
+    },
+    {
+      "id": "free-1793124159771",
+      "items": [
+        "volume",
+        "brightness",
+        "opacity"
+      ],
+      "position": 0.7810939188693796,
+      "x": 0.0011723329425556857,
+      "y": 0.7810939188693796
+    },
+    {
+      "id": "free-1793123952788",
+      "items": [
+        "gpu",
+        "ram",
+        "cpu",
+        "ws",
+        "disk:uuid%3A__ROOT_VOLUME_UUID__"
+      ],
+      "position": 0.0032222043389881407,
+      "x": 0.0011723329425556857,
+      "y": 0.0032222043389881407
+    },
+    {
+      "id": "free-1793032751744",
+      "items": [
+        "battery",
+        "notif",
+        "wall",
+        "settings",
+        "power",
+        "net"
+      ],
+      "position": 0.9938825573357314,
+      "x": 0.0011723541081515422,
+      "y": 0.9938825573357314
+    },
+    {
+      "id": "free-1793497719827",
+      "items": [
+        "media"
+      ],
+      "position": 0.26220081875776385,
+      "x": 0.0011723329425556857,
+      "y": 0.26220081875776385
+    }
+  ],
+  "moduleOpacity": {
+    "battery": 1,
+    "brightness": 1,
+    "clock": 1,
+    "cpu": 1,
+    "disk:uuid%3A__ROOT_VOLUME_UUID__": 1,
+    "disk:uuid%3Ac9af128e-b9bc-431b-b059-154d76f2e26d": 1,
+    "gpu": 1,
+    "media": 1,
+    "net": 1,
+    "notif": 1,
+    "opacity": 1,
+    "power": 1,
+    "ram": 1,
+    "settings": 1,
+    "tasks": 1,
+    "volume": 1,
+    "wall": 1,
+    "ws": 1
+  },
+  "moduleScale": {
+    "battery": 1.0022,
+    "cpu": 0.9104,
+    "disk:uuid%3Ac9af128e-b9bc-431b-b059-154d76f2e26d": 0.972,
+    "gpu": 0.9105,
+    "net": 1.0022,
+    "notif": 1.0022,
+    "power": 1.0022,
+    "ram": 0.9105,
+    "settings": 1.0022,
+    "tasks": 1.0014,
+    "wall": 1.0022,
+    "ws": 0.9104
+  },
+  "moduleScaleVersion": 2,
+  "moduleZoom": 1,
+  "position": "left",
+  "quickFloatRetile": true,
+  "radius": 16,
+  "reserveSpace": true,
+  "scale": 1,
+  "startMods": "",
+  "statsGpu": true,
+  "statsMode": "default",
+  "statsWarn": 90,
+  "style": "floating",
+  "taskIconSize": 18,
+  "taskMaxVisible": 5,
+  "tasksCollapsed": true,
+  "thickness": 16,
+  "tipDelay": 450,
+  "tooltipHints": true,
+  "tooltips": true,
+  "volMax": 100,
+  "volStep": 2,
+  "weekMonday": true,
+  "windowGroups": [],
+  "windowGroupsEnabled": true,
+  "wsDot": 10,
+  "wsGap": 8,
+  "wsScroll": true
+}

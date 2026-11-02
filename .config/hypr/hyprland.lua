@@ -26,16 +26,19 @@ end
 hl.on("hyprland.start", function()
     -- hl.exec_cmd("dunst") replaced with quickshell
     hl.exec_cmd("nm-applet")
-    hl.exec_cmd("wl-paste --type text --watch cliphist store")
+    -- Surveillance du texte déjà assurée par cliphist.service
     hl.exec_cmd("wl-paste --type image --watch cliphist store")
+    hl.exec_cmd("systemctl --user start hyprpolkitagent.service")
+
     hl.exec_cmd("awww-daemon")
     hl.exec_cmd("~/.config/hypr/scripts/wallpaper-restore.sh")
-    hl.exec_cmd("sleep 1 && QSG_RENDER_LOOP=basic QS_ICON_THEME=Papirus qs")
+    hl.exec_cmd("systemctl --user start 43pr-quickshell.service")
 end)
 
 ---- ENVIRONMENT VARIABLES ----
 
-hl.env("XCURSOR_SIZE", "14")
+hl.env("XCURSOR_SIZE", os.getenv("HYPRCURSOR_SIZE") or "24")
+hl.env("BROWSER", os.getenv("HOME") .. "/.config/hypr/scripts/default-browser.py")
 hl.env("QT_QPA_PLATFORM", "wayland")
 hl.env("MOZ_ENABLE_WAYLAND", "1")
 
@@ -43,7 +46,7 @@ hl.env("MOZ_ENABLE_WAYLAND", "1")
 
 hl.config({
     input = {
-        kb_layout = "us,latam",
+        kb_layout = "fr",
         follow_mouse = 1,
         sensitivity = 0.5,
         touchpad = {
@@ -55,7 +58,7 @@ hl.config({
 
 -- LAYOUT
 hl.config({
-    dwindle = { preserve_split = true },
+    dwindle = { preserve_split = true, precise_mouse_move = true, smart_split = true },
 })
 hl.config({
     master = { new_status = "master" },
@@ -90,6 +93,3 @@ require("rules")
 
 -- HyprMod managed settings
 require("hyprland-gui")
-
--- Let applications follow the same XDG choice as Super+B.
-hl.env("BROWSER", "python3 " .. os.getenv("HOME") .. "/.config/hypr/scripts/default-browser.py")

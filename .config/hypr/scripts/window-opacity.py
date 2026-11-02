@@ -13,7 +13,7 @@ def status():
  runtime=Path(os.environ['XDG_RUNTIME_DIR'])/'43pr-opacity';saved=read(runtime/'windows.json',{});values=read(Path.home()/'.config/hypr/workspace-opacity.json',{})
  a=active.get('address');entry=saved.get(a,{})
  if entry.get('pid')!=active.get('pid'):entry={}
- workspace=ws.get('id',1);default=values.get(str(workspace),0.9)
+ workspace=ws.get('id',1);default=values.get(str(workspace),1.0)
  return {'workspace':workspace,'workspaceValue':default,'window':{'address':a,'title':active.get('title',''),'class':active.get('class',''),'locked':bool(entry),'value':entry.get('value',default),'fullscreen':active.get('fullscreen',0)==2 or active.get('fullscreenClient',0)==2},'windows':len(windows)}
 
 def apply(address=None,value=None,sync=False,workspace=None,preview=False,cancel=False,reset_all=False):
@@ -43,7 +43,7 @@ def apply(address=None,value=None,sync=False,workspace=None,preview=False,cancel
   values=read(Path.home()/'.config/hypr/workspace-opacity.json',{})
   commands=[]
   for a,c in windows.items():
-   desired=saved[a]['value'] if a in saved else values.get(str(c['workspace']['id']),0.9)
+   desired=saved[a]['value'] if a in saved else values.get(str(c['workspace']['id']),1.0)
    if previews.get('window')==a:desired=previews['value']
    if previews.get('workspace')==c['workspace']['id'] and a not in saved:desired=previews['value']
    fullscreen=c.get('fullscreen',0)==2 or c.get('fullscreenClient',0)==2
