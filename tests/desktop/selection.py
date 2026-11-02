@@ -97,7 +97,7 @@ class Selection:
 
 
 ALL_ISOLATED = ('ipc-reconnect','async-save','layout','ipc-release','sizes',
-                'legacy-storage','native-defaults','native-badge','updater-safety','carousel-bindings','style-choice','lifecycle','slider','component-states','surface',
+                'legacy-storage','native-defaults','native-migration','native-badge','updater-safety','carousel-bindings','style-choice','lifecycle','slider','component-states','surface',
                 'shared-gestures','selection','edge-margin','bubble-geometry','wallpaper-control','workspace-clicks','settings-escape','storage-layout','storage-data')
 # Symbols are the actual functions/components, not the containing filename.
 COMMON = {'moduleScale','moduleFactor','individualFactor','uniformScale','adjustSelection',
