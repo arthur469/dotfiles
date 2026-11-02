@@ -201,22 +201,8 @@ fi
 # Default shell
 # --------------------------------------------------
 
-if [[ -x /bin/zsh ]]; then
-    if [[ "$SHELL" != "/bin/zsh" ]]; then
-        info "Setting Zsh as the default shell..."
-
-        if chsh -s /bin/zsh; then
-            success "Default shell changed to Zsh."
-            warning "Log out and back in for the shell change to take effect."
-        else
-            warning "Failed to change the default shell to Zsh."
-        fi
-    else
-        info "Zsh is already the default shell."
-    fi
-else
-    warning "Zsh is not installed; skipping default shell configuration."
-fi
+# Arthur keeps Fish and the existing login-shell selection.
+info "Personal profile: keeping the current login shell."
 
 # --------------------------------------------------
 # 43PR custom applications

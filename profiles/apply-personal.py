@@ -12,7 +12,7 @@ def main():
  rows=[]
  for f in sorted(source.rglob('*')):
   if not f.is_file():continue
-  rel=f.relative_to(source);assert rel.parts[:2]==('.config','quickshell') or rel.parts[:2]==('.config','hypr')
+  rel=f.relative_to(source);assert rel.parts[:2]==('.config','quickshell') or rel.parts[:2]==('.config','hypr') or rel.parts[:2]==('.config','fish')
   raw=f.read_text().replace('__ROOT_VOLUME_UUID__',uuid).replace('__PROFILE_HOME__',str(home))
   if f.suffix=='.json':json.loads(raw)
   rows.append((rel,raw))
